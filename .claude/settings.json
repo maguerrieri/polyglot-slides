@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "maguerrieri-toolbox": {
+      "source": { "source": "github", "repo": "maguerrieri/claude-toolbox" }
+    }
+  },
+  "enabledPlugins": {
+    "defaults@maguerrieri-toolbox": true
+  }
+}

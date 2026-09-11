@@ -26,6 +26,9 @@
   right sizes,
   publisher is `sprue.works` with an `@sprue.works` support address (brand
   verification checks name, support email, and homepage domain agree).
+- `.claude/settings.json` — declares the claude-toolbox plugin marketplace
+  (<https://github.com/maguerrieri/claude-toolbox>) and enables its
+  `defaults` meta-plugin, so the toolbox plugins load in Claude Code here.
 - This file — gotchas that aren't visible from the code.
 
 Two user-facing surfaces deliver messages differently and always have: sidebar
