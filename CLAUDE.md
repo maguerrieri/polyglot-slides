@@ -18,7 +18,9 @@
 - `marketplace/` — the Workspace Marketplace listing as data: `listing.json`
   (what a human pastes into the Marketplace SDK / consent screen), the icon
   and screenshots, and `RUNBOOK.md` (the click-through). `docs/` is the
-  GitHub Pages site (homepage + privacy + terms) brand verification needs.
+  GitHub Pages site (homepage + privacy + terms) brand verification needs;
+  its look comes from the sprue.works brand theme (see "The docs site is
+  styled by the brand theme" below), enforced by `tools/test-docs-theme.sh`.
   `tools/check-listing.sh` is the contract: listing scopes == manifest scopes,
   script reference resolves to `.clasp.json#scriptId` (the one field the
   Editor-add-on console form consumes that the repo can verify; the version
@@ -183,6 +185,29 @@ consequences:
   verification alone; CASA is for *restricted* scopes only); the Marketplace
   SDK has no left-nav entry (its API Library page → *Manage*); App visibility
   Private/Public is irreversible once saved. GCP project number: 556097262294.
+
+## The docs site is styled by the brand theme, and the legal pages' text is pinned
+
+`docs/*.html` carry no inline `<style>`. Each links
+`https://sprue.works/brand/v1/theme.css` (the org's CSS custom properties,
+`--sw-*`; usage notes in `brand/README.md` of sprue-works/website) and then
+`docs/site.css`, which maps those tokens onto elements and defines no colour
+or font of its own. Every `var(--sw-*)` carries a fallback so an unreachable
+sprue.works degrades to readable, not to invalid CSS — and the theme only
+ships light-scheme fallbacks that way, so with the theme blocked the pages
+render light in both schemes; that is the intended degradation. Missing tokens
+are an issue on sprue-works/website, not a literal here; product-specific
+branding is the icon, an image, so nothing overrides the theme. The theme is
+served `immutable` for a year, so a value change upstream reaches repeat
+visitors slowly.
+
+`tools/test-docs-theme.sh` (CI) enforces the link order, the no-literals rule,
+the fallbacks — and pins the **text content** of `docs/privacy.html` and
+`docs/terms.html` to `tools/fixtures/docs-text/*.txt`. Google's OAuth
+verification reviews those pages' wording and a change restarts the round
+(#41), so styling work must leave the text byte-identical and CI fails if it
+doesn't. A deliberate wording change regenerates the fixtures in the same
+commit with `tools/test-docs-theme.sh --update-fixtures`.
 
 ## QuickLook thumbnails don't scale SVGs with an intrinsic size
 
