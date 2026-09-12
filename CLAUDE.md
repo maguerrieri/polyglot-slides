@@ -201,8 +201,10 @@ branding is the icon, an image, so nothing overrides the theme. The theme is
 served `immutable` for a year, so a value change upstream reaches repeat
 visitors slowly.
 
-`tools/test-docs-theme.sh` (CI) enforces the link order, the no-literals rule,
-the fallbacks — and pins the **text content** of `docs/privacy.html` and
+`tools/test-docs-theme.sh` (CI) enforces the link order, no literal colours or
+font-families, and the fallbacks — sizes and spacing follow the theme scale by
+convention only, since a checker can't tell a layout constant from a missed
+token — and pins the **text content** of `docs/privacy.html` and
 `docs/terms.html` to `tools/fixtures/docs-text/*.txt`. Google's OAuth
 verification reviews those pages' wording and a change restarts the round
 (#41), so styling work must leave the text byte-identical and CI fails if it
