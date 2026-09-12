@@ -214,8 +214,10 @@ failed exactly there.)
      A green push-to-main deploy proves neither: `clasp push` succeeds without
      the per-user toggle and only `clasp version` fails (the `v1.0.1` tag run
      did exactly that, after #36 moved the project to the publishing
-     account). `deploy.yml` now runs `clasp list-versions` at auth setup so
-     the gap surfaces on the next deploy rather than on the next tag.
+     account). `deploy.yml` runs `tools/preflight.sh` (`clasp list-versions`)
+     at auth setup so the gap surfaces on the next deploy rather than on the
+     next tag, and tells the toggle apart from a Workspace session-control
+     rejection (`invalid_rapt`; README "One-time setup" step 2).
 
 ## 3. OAuth consent screen
 
