@@ -6,10 +6,14 @@
 #
 #   - every docs/*.html links the theme, then site.css, in that order, and
 #     carries no inline <style> (all styling lives in site.css);
-#   - site.css reads colours, fonts, sizes and spacing through --sw-* tokens
-#     only: no literal colour or font-family outside a var() fallback, and
-#     every var(--sw-*) carries a fallback so an unreachable sprue.works
-#     degrades to readable, not to invalid CSS;
+#   - site.css takes colours and typefaces from --sw-* tokens only: no literal
+#     colour or font-family outside a var() fallback, no local --sw-*
+#     definition, and every var(--sw-*) carries a fallback so an unreachable
+#     sprue.works degrades to readable, not to invalid CSS. Sizes and spacing
+#     use the theme's scale by convention, not enforcement: the checker cannot
+#     tell a layout constant (the 44rem measure, the 64px icon, a relative
+#     0.95em) from a value that should have been a token, so review covers
+#     those;
 #   - the text content of docs/privacy.html and docs/terms.html (tags and
 #     <style> stripped, whitespace collapsed) is byte-identical to the fixture
 #     in tools/fixtures/docs-text/. Google's OAuth verification reviews those
@@ -61,7 +65,7 @@ else {
   for (const m of stripped.matchAll(/font(?:-family)?\s*:\s*([^;\s][^;]*);/g)) fail(`${cssFile}: literal font-family '${m[1].trim()}' outside a var() fallback; use a --sw-font-* token`);
   const themeLocal = css.match(/^\s*--sw-[\w-]+\s*:/m);
   if (themeLocal) fail(`${cssFile}: defines ${themeLocal[0].trim()}; --sw-* tokens are the theme's, not ours (product overrides use another prefix)`);
-  if (!failures) ok(`${cssFile} reads colours and fonts only through --sw-* tokens, all with fallbacks`);
+  if (!failures) ok(`${cssFile} reads colours and typefaces only through --sw-* tokens, all with fallbacks`);
 }
 
 // Legal pages: text content pinned to the fixtures.
