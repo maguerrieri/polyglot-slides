@@ -59,7 +59,7 @@ the sidebar, persisted via `UserProperties`; the offered list is
 - `tools/check-listing.sh`, `tools/render-icons.sh` — Marketplace listing consistency check and icon rendering; both use `tools/png-check.js` to verify the icon artwork fills its canvas
 - `tools/reconcile-pages-dns.sh` — idempotent Cloudflare check/apply for the DNS-only Pages CNAME
 - `marketplace/` — Marketplace listing config, assets, and the publishing runbook
-- `docs/` — GitHub Pages site: homepage, privacy policy, terms (brand verification)
+- `docs/` — GitHub Pages site: homepage, privacy policy, terms (brand verification); styled by the sprue.works brand theme via `docs/site.css`, checked by `tools/test-docs-theme.sh`
 - `tools/lint.sh`, `tools/lint-workflows.sh`, `tools/test-*.sh` — what the CI
   workflow runs
 - `.github/workflows/` — `ci.yml` (lint on PRs), `deploy.yml` (push on
@@ -120,7 +120,10 @@ pastes it:
   sizes plus `docs/icon.png` by `tools/render-icons.sh`) and, once captured, the 1280×800
   screenshots listed in `marketplace/screenshots.json`.
 - `docs/` — the homepage, privacy policy, and terms of service served by
-  GitHub Pages; brand verification requires them.
+  GitHub Pages; brand verification requires them. Their colours and type come
+  from the sprue.works brand theme (`https://sprue.works/brand/v1/theme.css`)
+  through `docs/site.css`; `tools/test-docs-theme.sh` keeps that so and pins
+  the legal pages' wording, which OAuth verification reviews.
 
 What stays manual — Google has no write API for any of it — is a one-time
 click-through documented step by step in
