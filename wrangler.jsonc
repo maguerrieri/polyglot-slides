@@ -1,0 +1,36 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "polyglot-slides",
+  "compatibility_date": "2026-09-12",
+
+  // Assets-only Worker: no script, everything under docs/ is served as-is
+  // (minus docs/.assetsignore). Mirrors sprue-works/website's wrangler.jsonc.
+  //
+  // html_handling is "none", not the "auto-trailing-slash" default the main
+  // site uses: the default answers /privacy.html with a 307 to /privacy, and
+  // /privacy.html and /terms.html are the exact URLs pasted into the OAuth
+  // consent screen and the Marketplace listing (marketplace/RUNBOOK.md). With
+  // "none" the site root would 404, so docs/_redirects rewrites / (and the
+  // extensionless paths GitHub Pages used to serve) with a 200 — no redirect
+  // is ever emitted. tools/test-docs-worker.sh pins all of this.
+  "assets": {
+    "directory": "./docs",
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+
+  // Custom domain. Deploying creates the DNS record and certificate — but
+  // Cloudflare refuses to attach a Custom Domain while a CNAME exists on the
+  // hostname, so the first production deploy IS the cutover from GitHub
+  // Pages (marketplace/RUNBOOK.md §1c). Until a human runs it, production
+  // builds fail at this step by design while previews keep working.
+  "routes": [
+    { "pattern": "polyglot.sprue.works", "custom_domain": true }
+  ],
+
+  // Branch previews: Workers Builds uploads a version per non-production
+  // branch and aliases it by branch name at
+  // <alias>-polyglot-slides.igneus-fdc.workers.dev (README "Docs site").
+  "workers_dev": true,
+  "preview_urls": true
+}

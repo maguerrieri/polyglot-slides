@@ -15,7 +15,12 @@ fresh() {
   cp -R "$repo_root/marketplace" "$repo_root/docs" "$work/repo/"
   cp "$repo_root/tools/check-listing.sh" "$repo_root/tools/png-check.js" "$work/repo/tools/"
   cp "$repo_root/src/appsscript.json" "$work/repo/src/"
-  cp "$repo_root/.clasp.json" "$work/repo/"
+  cp "$repo_root/.clasp.json" "$repo_root/wrangler.jsonc" "$work/repo/"
+}
+# Edit wrangler.jsonc in the fresh copy with a JS expression over the parsed
+# config; the check reads JSONC, so plain JSON output is fine.
+edit_wrangler() { # edit_wrangler <js mutating `j`>
+  (cd "$work/repo" && node -e 'const fs=require("fs"),f="wrangler.jsonc";const s=fs.readFileSync(f,"utf8").replace(/\/\*[\s\S]*?\*\//g,"").replace(/^\s*\/\/.*$/gm,"").replace(/,(\s*[}\]])/g,"$1");const j=JSON.parse(s);'"$1"';fs.writeFileSync(f,JSON.stringify(j))')
 }
 
 expect_pass() { # expect_pass <label>
@@ -172,5 +177,35 @@ expect_fail "plain-http draft tester opt-out URL" "draftTesterOptOut must be a w
 fresh
 (cd "$work/repo" && node -e 'const fs=require("fs"),f="marketplace/listing.json",j=JSON.parse(fs.readFileSync(f));j.urls.draftTesterOptOut="file an issue";fs.writeFileSync(f,JSON.stringify(j))')
 expect_fail "non-URL draft tester opt-out" "draftTesterOptOut must be a well-formed https URL"
+
+# Hosting invariants (#47): docs/ is served by a Cloudflare Worker.
+fresh
+rm "$work/repo/wrangler.jsonc"
+expect_fail "wrangler config missing reports cleanly" "wrangler.jsonc is missing or not valid JSONC"
+
+fresh
+edit_wrangler 'j.assets.html_handling="auto-trailing-slash"'
+expect_fail "html_handling that redirects .html URLs" 'html_handling must be "none"'
+
+fresh
+edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works/*",zone_name:"sprue.works"}]'
+expect_fail "hostname not routed as a custom domain" 'custom_domain: true'
+
+fresh
+edit_wrangler 'j.preview_urls=false'
+expect_fail "branch previews switched off" "preview_urls"
+
+fresh
+rm "$work/repo/docs/_redirects"
+expect_fail "root rewrite missing" "docs/_redirects must rewrite"
+
+fresh
+printf 'polyglot-slides.pages.dev\n' >"$work/repo/docs/CNAME"
+expect_fail "stale Pages CNAME" "docs/CNAME must contain polyglot.sprue.works"
+
+fresh
+# Post-cutover shape: the Pages control files are gone. Not an error.
+rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll"
+expect_pass "Pages control files removed after cutover"
 
 echo "all check-listing.sh tests passed"

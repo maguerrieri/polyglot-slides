@@ -1,0 +1,7 @@
+# Not uploaded to the Cloudflare Worker (same syntax as .gitignore).
+# CNAME and .nojekyll are GitHub Pages control files; they stay in the repo
+# until Pages is switched off after the cutover (marketplace/RUNBOOK.md §1c),
+# because removing CNAME from the published branch drops the custom domain
+# from the Pages site while it is still live.
+CNAME
+.nojekyll

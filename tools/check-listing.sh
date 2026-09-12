@@ -18,6 +18,10 @@
 #     mark in one corner (#27)
 #   - the listing URLs point at pages that exist under docs/, and the Store
 #     Listing's required Draft Tester Opt-Out URL is a well-formed https URL
+#   - wrangler.jsonc hosts docs/ on the listing's hostname with html_handling
+#     "none" (anything else redirects the .html URLs Google holds) and
+#     docs/_redirects restores / -> index.html; docs/CNAME, if still present
+#     for the not-yet-retired GitHub Pages site, names the same host
 #   - the publisher identity is sprue.works: developerName and the public
 #     supportEmail's domain (brand verification checks these against the
 #     verified homepage domain); contactEmail is on the domain too so no
@@ -179,9 +183,33 @@ for (const [k, expectFile] of [['homepage', 'index.html'], ['privacyPolicy', 'pr
   else if (rel !== expectFile) fail(`urls.${k} should point at ${expectFile}, points at ${rel}`);
   else ok(`urls.${k} -> ${file}`);
 }
-if (!fs.existsSync('docs/.nojekyll')) fail('docs/.nojekyll missing (GitHub Pages would run Jekyll over the site)');
-if (!fs.existsSync('docs/CNAME')) fail('docs/CNAME missing (Pages would lose the custom domain)');
-else if (fs.readFileSync('docs/CNAME', 'utf8').trim() !== 'polyglot.sprue.works') fail('docs/CNAME must contain polyglot.sprue.works');
+// Hosting: docs/ is served by a Cloudflare Worker (wrangler.jsonc). The
+// listing URLs above only hold if the Worker routes the hostname and serves
+// the .html paths without redirecting them (see the comments in wrangler.jsonc
+// and docs/_redirects; tools/test-docs-worker.sh checks the served responses).
+const publicHost = new URL(publicBase).hostname;
+const stripJsonc = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,(\s*[}\]])/g, '$1');
+let wrangler = null;
+try { wrangler = JSON.parse(stripJsonc(fs.readFileSync('wrangler.jsonc', 'utf8'))); }
+catch (e) { fail(`wrangler.jsonc is missing or not valid JSONC (${e.message}); it is how docs/ is hosted`); }
+if (wrangler) {
+  const assets = wrangler.assets || {};
+  if (assets.directory !== './docs') fail(`wrangler.jsonc assets.directory must be ./docs (got ${assets.directory})`);
+  if (assets.html_handling !== 'none') fail(`wrangler.jsonc assets.html_handling must be "none" (got ${assets.html_handling}); any other mode redirects /privacy.html, a URL Google holds`);
+  const routes = Array.isArray(wrangler.routes) ? wrangler.routes : [];
+  if (!routes.some((r) => r && r.pattern === publicHost && r.custom_domain === true)) fail(`wrangler.jsonc routes must include { pattern: "${publicHost}", custom_domain: true }`);
+  if (wrangler.workers_dev !== true || wrangler.preview_urls !== true) fail('wrangler.jsonc must keep workers_dev and preview_urls on (branch previews)');
+  if (!fs.existsSync('docs/.assetsignore') || !/^(?:CNAME|\.nojekyll)$/m.test(fs.readFileSync('docs/.assetsignore', 'utf8'))) fail('docs/.assetsignore must exclude the GitHub Pages control files while they remain');
+  if (!failures) ok(`wrangler.jsonc serves docs/ on ${publicHost} with html_handling none`);
+}
+if (!fs.existsSync('docs/_redirects') || !/^\/ \/index\.html 200$/m.test(fs.readFileSync('docs/_redirects', 'utf8'))) {
+  fail('docs/_redirects must rewrite "/ /index.html 200" (html_handling none does not serve index.html at /)');
+}
+// Transitional: the GitHub Pages site stays live until the cutover in
+// marketplace/RUNBOOK.md §1c. Until then its custom domain lives in docs/CNAME,
+// so if the file is present it must still name the right host. Removing both
+// control files is the post-cutover cleanup, not an error here.
+if (fs.existsSync('docs/CNAME') && fs.readFileSync('docs/CNAME', 'utf8').trim() !== publicHost) fail(`docs/CNAME must contain ${publicHost} while GitHub Pages is still serving`);
 
 if (failures) { console.error(`${failures} listing check(s) failed`); process.exit(1); }
 console.log('listing checks passed');
