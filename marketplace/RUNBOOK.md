@@ -50,13 +50,21 @@ same arrangement as sprue-works/website. Production is `main`; every other
 branch gets a preview URL (README "Docs site"). CI pins what Google depends
 on: `tools/test-docs-worker.sh` serves `docs/` with `wrangler dev` and checks
 that `/`, `/privacy.html`, and `/terms.html` answer 200 with no redirect and
-byte-identical bodies; `tools/check-listing.sh` checks the config routes
-`polyglot.sprue.works` and keeps `html_handling` at `none`.
+byte-identical bodies; `tools/check-listing.sh` keeps `html_handling` at
+`none` and allows no route other than `polyglot.sprue.works`.
 
 Until the cutover in 1c has happened, the *live* site is still the legacy
 GitHub Pages build of `main:/docs` behind a DNS-only Cloudflare CNAME to
-`sprue-works.github.io`. The two coexist: nothing in 1a–1b touches the live
-hostname.
+`sprue-works.github.io`, and `wrangler.jsonc` declares **no custom domain**
+(the route is present but commented out). That is deliberate, not an
+omission: a non-interactive `wrangler deploy` — which is what Workers Builds
+runs on every push to `main` — sends `override_existing_dns_record: true`
+and replaces whatever DNS record sits on a declared custom domain **without
+asking** (wrangler 4.131.1, `publishCustomDomains`; the interactive path asks
+"You already have DNS records that conflict for these Custom Domains …
+Update them to point to this script instead?" first). With the route in
+place, merging any PR would be the cutover. So 1a–1b touch nothing live, and
+the route goes in with 1c.
 
 ### 1a. Connect the repo to Workers Builds (one-time)
 
@@ -67,27 +75,23 @@ From an account with access to the sprue.works Cloudflare account:
    org from the website; select `sprue-works/polyglot-slides`.
 2. Worker name **`polyglot-slides`** (must match `name` in `wrangler.jsonc`),
    production branch `main`, no build command, deploy command left at the
-   default. Create and deploy.
+   default. Create and deploy. With no route declared this deploy only
+   publishes `https://polyglot-slides.igneus-fdc.workers.dev`.
 3. In the Worker: Settings → Build → enable **non-production branch builds**
    and **pull request comments**. Settings → Domains & Routes should show the
-   `workers.dev` route and preview URLs enabled, from `wrangler.jsonc`.
+   `workers.dev` route and preview URLs enabled, from `wrangler.jsonc`, and no
+   custom domain yet.
 
-**Expect the production build to fail** at its last step until 1c is done.
-`wrangler deploy` uploads the assets, then tries to attach the
-`polyglot.sprue.works` custom domain, and Cloudflare refuses to create a
-Custom Domain on a hostname that already has a CNAME record. That is the
-GitHub Pages CNAME, and removing it *is* the cutover. Branch builds run
-`wrangler versions upload`, which never touches domains, so previews work
-from the first push.
+Branch builds run `wrangler versions upload`, which never touches routes or
+domains, so previews are safe at every stage.
 
 ### 1b. Verify the Worker on its own hostnames
 
 Before touching DNS, prove the Worker serves the pages exactly as Pages does:
 
-1. Open the PR's preview URL (the Workers Builds comment, or
-   `https://<branch-alias>-polyglot-slides.igneus-fdc.workers.dev/`) and,
-   after the merge, the production copy at
-   `https://polyglot-slides.igneus-fdc.workers.dev/`.
+1. Open a PR's preview URL (the Workers Builds comment, or
+   `https://<branch-alias>-polyglot-slides.igneus-fdc.workers.dev/`) and the
+   production copy at `https://polyglot-slides.igneus-fdc.workers.dev/`.
 2. From a checkout of `main`, compare bytes and status codes for the URLs
    Google holds:
 
@@ -108,43 +112,61 @@ Before touching DNS, prove the Worker serves the pages exactly as Pages does:
 
 Google's reviewers fetch `https://polyglot.sprue.works/privacy.html` and
 `/terms.html` by exactly those URLs while verification is in progress, so
-the switch has to be one atomic record change, not a delete-then-add.
-Cloudflare's Custom Domain attach can replace the existing record in one
-API call, and `wrangler deploy` run **interactively** offers exactly that:
+the switch has to be one atomic record change, not a delete-then-add. The
+Custom Domain attach with `override_existing_dns_record` is that single
+change: Cloudflare replaces the CNAME with the Worker's own proxied record in
+one call, and Universal SSL already covers the first-level subdomain, so the
+hostname never resolves to nothing. **Not yet exercised on this account** —
+the interactive step below exists so a human sees the prompt and the result
+before any automation does.
 
-1. From a checkout of `main`, signed in to the sprue.works Cloudflare account:
+1. Open the cutover PR: in `wrangler.jsonc`, uncomment the `routes` block so
+   it reads
+
+   ```jsonc
+   "routes": [
+     { "pattern": "polyglot.sprue.works", "custom_domain": true }
+   ],
+   ```
+
+   and nothing else. CI (`check-listing.sh`) accepts exactly this route. Do
+   **not** merge it yet — merging deploys non-interactively and would perform
+   the cutover unattended.
+
+2. From a checkout of that branch, signed in to the sprue.works Cloudflare
+   account, run the deploy **interactively** (a real terminal, not CI):
 
    ```bash
    npx wrangler@4 login
    npx wrangler@4 deploy
    ```
 
-   Wrangler uploads the assets, detects the existing CNAME on
-   `polyglot.sprue.works`, and asks whether to **override the existing DNS
-   record**. Answer yes. Cloudflare swaps the CNAME for the Worker's own
-   proxied record and the certificate (Universal SSL already covers the
-   first-level subdomain), so the hostname never resolves to nothing.
-   Wrangler refuses this in non-interactive runs, which is why Workers Builds
-   could not do it.
+   Wrangler uploads the assets, then reports the existing record on
+   `polyglot.sprue.works` and asks *"You already have DNS records that
+   conflict for these Custom Domains … Update them to point to this script
+   instead?"*. Answer **yes**. If instead it fails or the prompt names
+   anything other than that one hostname, answer no / stop: nothing has
+   changed yet (the assets upload alone does not touch DNS), and the
+   fallback is the dashboard — Worker → Settings → Domains & Routes → Add →
+   Custom Domain — which performs the same attach and shows the same
+   conflict. Never delete the CNAME by hand first: a delete-then-add leaves
+   the hostname unresolvable for the gap, and one 404 seen by a reviewer
+   costs a multi-day review round.
 
-   If the prompt does not appear (wrangler behaviour changed), **stop** rather
-   than deleting the CNAME by hand: a dashboard delete-then-add leaves the
-   hostname unresolvable for the gap between the two, and one 404 seen by a
-   reviewer costs a multi-day review round. Fall back to the Cloudflare API's
-   attach-domain call with `override_existing_dns_record` set, or ask in
-   sprue-works/website how its domains were first attached.
-
-2. Verify the live hostname the same way as 1b, with
+3. Verify the live hostname the same way as 1b, with
    `host=polyglot.sprue.works`, plus one request through a resolver that has
    not cached the old answer (`curl --resolve` against a Cloudflare edge IP,
    or a phone off wifi). The Pages CNAME had a 1-second TTL, so the switch is
-   visible within seconds.
+   visible within seconds. Rollback, if the pages are wrong: Worker →
+   Settings → Domains & Routes → remove the custom domain, then recreate the
+   DNS-only CNAME to `sprue-works.github.io` (Pages is still enabled at this
+   point and still holds the domain, so it resumes serving).
 
-3. Retry the failed Workers Builds production build (Worker → Deployments →
-   Retry) so `main` is green, then push a trivial branch to confirm previews
-   still comment on the PR.
+4. Merge the cutover PR. Workers Builds redeploys `main` with a route that is
+   already attached; the domain changeset is empty, so nothing moves. From
+   here on every merge to `main` is a plain content deploy.
 
-4. Switch GitHub Pages off so it cannot be re-pointed at the hostname:
+5. Switch GitHub Pages off so it cannot be re-pointed at the hostname:
 
    ```bash
    gh api -X DELETE repos/sprue-works/polyglot-slides/pages
@@ -154,14 +176,13 @@ API call, and `wrangler deploy` run **interactively** offers exactly that:
    it is harmless and blocks another repo from claiming the hostname on
    GitHub's side.
 
-5. Open the post-cutover cleanup PR: delete `docs/CNAME`, `docs/.nojekyll`
-   and the two lines that name them in `docs/.assetsignore` (the
-   `check-listing.sh` self-test already covers that shape); delete the
-   **`pages-dns`** environment and the `CLOUDFLARE_API_TOKEN` secret /
-   `CLOUDFLARE_ZONE_ID` variable in repo settings (nothing reads them any
-   more, and the token can be revoked in Cloudflare); drop the
-   "Until the cutover" paragraph above and this step. Nothing in that PR
-   touches a served byte, so the URLs stay as they are.
+6. Open the cleanup PR: delete `docs/CNAME`, `docs/.nojekyll` and
+   `docs/.assetsignore` (the `check-listing.sh` self-test already covers that
+   shape); delete the **`pages-dns`** environment and the
+   `CLOUDFLARE_API_TOKEN` secret / `CLOUDFLARE_ZONE_ID` variable in repo
+   settings (nothing reads them any more, and the token can be revoked in
+   Cloudflare); drop the "Until the cutover" paragraph above and this step.
+   Nothing in that PR touches a served byte, so the URLs stay as they are.
 
 **Brand verification needs proof you own the homepage's domain.** Add
 `sprue.works` to Search Console and complete its DNS verification before the

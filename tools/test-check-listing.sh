@@ -189,7 +189,21 @@ expect_fail "html_handling that redirects .html URLs" 'html_handling must be "no
 
 fresh
 edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works/*",zone_name:"sprue.works"}]'
-expect_fail "hostname not routed as a custom domain" 'custom_domain: true'
+expect_fail "hostname routed but not as a custom domain" 'custom_domain: true'
+
+fresh
+edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works",custom_domain:true},{pattern:"sprue.works",custom_domain:true}]'
+expect_fail "a hostname this repo does not own" "routes an unexpected pattern"
+
+fresh
+# The post-cutover shape: the custom domain declared (RUNBOOK section 1c).
+edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works",custom_domain:true}]'
+expect_pass "custom domain declared after the cutover"
+
+fresh
+# CNAME still present but no longer kept out of the Worker's assets.
+rm "$work/repo/docs/.assetsignore"
+expect_fail "Pages control file would be served by the Worker" "docs/.assetsignore must list CNAME"
 
 fresh
 edit_wrangler 'j.preview_urls=false'
@@ -204,8 +218,9 @@ printf 'polyglot-slides.pages.dev\n' >"$work/repo/docs/CNAME"
 expect_fail "stale Pages CNAME" "docs/CNAME must contain polyglot.sprue.works"
 
 fresh
-# Post-cutover shape: the Pages control files are gone. Not an error.
-rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll"
-expect_pass "Pages control files removed after cutover"
+# Post-cutover cleanup shape: the Pages control files and their ignore file
+# are all gone (RUNBOOK section 1c, last step). Not an error.
+rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll" "$work/repo/docs/.assetsignore"
+expect_pass "Pages control files and .assetsignore removed after cutover"
 
 echo "all check-listing.sh tests passed"

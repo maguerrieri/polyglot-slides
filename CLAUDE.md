@@ -234,11 +234,11 @@ size, renders, and crops the banner band back out with `sips -c … --cropOffset
 before downsampling. Keep the viewBox aspect equal to the intrinsic aspect,
 and square, whenever qlmanage is the renderer.
 
-## The docs site is a Worker, and `html_handling` must stay `none`
+## The docs site is a Worker; `html_handling` stays `none`, and the custom domain is the cutover
 
 `docs/` is served by a Cloudflare Worker with static assets (`wrangler.jsonc`,
-deployed by Workers Builds; README "Docs site", RUNBOOK §1). Two things about
-it are not the obvious configuration:
+deployed by Workers Builds; README "Docs site", RUNBOOK §1). Three things
+about it are not the obvious configuration:
 
 - **`html_handling: "none"`, not the `auto-trailing-slash` default the main
   sprue.works site uses.** The default answers `/privacy.html` with a
@@ -250,20 +250,35 @@ it are not the obvious configuration:
   extensionless paths GitHub Pages used to serve. `tools/test-docs-worker.sh`
   pins all of it in CI and `tools/check-listing.sh` rejects any other
   `html_handling` value. Don't "align it with the website repo".
-- **The custom domain cannot be attached while a CNAME exists on the
-  hostname**, so the first production deploy is the DNS cutover itself and
-  fails by design in Workers Builds until a human runs `wrangler deploy`
-  interactively and accepts the override prompt (RUNBOOK §1c). Preview
-  builds (`wrangler versions upload`) never touch domains, so a red
-  production build with green previews is the expected pre-cutover state,
-  not a broken config.
+- **A non-interactive `wrangler deploy` overrides the DNS record on a declared
+  custom domain without asking.** #47 first documented the opposite —
+  "production builds fail at the domain step until a human cuts over" — from
+  Cloudflare's doc line that a Custom Domain can't be created over an
+  existing CNAME. Reading wrangler 4.131.1's `publishCustomDomains` showed
+  the real behaviour: when stdout is not a TTY it sets
+  `override_existing_origin` and `override_existing_dns_record` to `true`
+  and proceeds; only an interactive run asks *"You already have DNS records
+  that conflict for these Custom Domains … Update them?"*. Workers Builds is
+  non-interactive, so **the `routes` entry for `polyglot.sprue.works` is
+  commented out in `wrangler.jsonc` until the human-run cutover** (RUNBOOK
+  §1c): uncommenting it and merging *is* the DNS switch. `check-listing.sh`
+  allows either no routes or exactly that one custom domain, nothing else.
+  Check the harness's actual code path before writing a runbook step around
+  a prompt.
+- **Copilot's version of that concern was wrong in detail but right in
+  effect** (PR #48): it claimed the override applies only to records owned by
+  another Worker. wrangler has two separate prompts — one for domains used by
+  other Workers (`override_existing_origin`) and one for conflicting DNS
+  records generally (`override_existing_dns_record`). Whether Cloudflare's
+  API honours the latter over a plain CNAME is still unverified on this
+  account, which is why §1c makes a human run it interactively first.
 
 Until that cutover, `docs/CNAME` and `docs/.nojekyll` stay in the repo:
 GitHub Pages still serves the live hostname from `main:/docs`, and removing
 `CNAME` from the published branch drops its custom domain immediately.
-`docs/.assetsignore` keeps them out of the Worker; `check-listing.sh` only
-checks `CNAME`'s content while the file exists and passes once both are
+`docs/.assetsignore` keeps them out of the Worker; `check-listing.sh`
+requires that only while either file exists, and passes once all three are
 gone. Removing them is the last step of RUNBOOK §1c. The old Pages DNS
 tooling (`tools/reconcile-pages-dns.sh`, `pages-dns.yml`, the DNS-only
 CNAME rule) was retired in #47; don't recreate it — the Worker's custom
-domain owns the record.
+domain owns the record after the cutover.

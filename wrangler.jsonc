@@ -19,14 +19,19 @@
     "not_found_handling": "none"
   },
 
-  // Custom domain. Deploying creates the DNS record and certificate — but
-  // Cloudflare refuses to attach a Custom Domain while a CNAME exists on the
-  // hostname, so the first production deploy IS the cutover from GitHub
-  // Pages (marketplace/RUNBOOK.md §1c). Until a human runs it, production
-  // builds fail at this step by design while previews keep working.
-  "routes": [
-    { "pattern": "polyglot.sprue.works", "custom_domain": true }
-  ],
+  // Custom domain — deliberately NOT declared yet. Adding the route below is
+  // the DNS cutover from GitHub Pages (marketplace/RUNBOOK.md §1c): a
+  // non-interactive `wrangler deploy` (what Workers Builds runs) passes
+  // override_existing_dns_record=true and replaces whatever record sits on
+  // the hostname without asking (verified in wrangler 4.131.1's source, see
+  // CLAUDE.md "The docs site is a Worker"). So the route lands in its own
+  // PR, after the Worker has been verified on its workers.dev hostnames, and
+  // the cutover PR's merge is the moment the live hostname moves. Until then
+  // production serves only at polyglot-slides.igneus-fdc.workers.dev.
+  //
+  // "routes": [
+  //   { "pattern": "polyglot.sprue.works", "custom_domain": true }
+  // ],
 
   // Branch previews: Workers Builds uploads a version per non-production
   // branch and aliases it by branch name at

@@ -18,10 +18,12 @@
 #     mark in one corner (#27)
 #   - the listing URLs point at pages that exist under docs/, and the Store
 #     Listing's required Draft Tester Opt-Out URL is a well-formed https URL
-#   - wrangler.jsonc hosts docs/ on the listing's hostname with html_handling
-#     "none" (anything else redirects the .html URLs Google holds) and
-#     docs/_redirects restores / -> index.html; docs/CNAME, if still present
-#     for the not-yet-retired GitHub Pages site, names the same host
+#   - wrangler.jsonc hosts docs/ with html_handling "none" (anything else
+#     redirects the .html URLs Google holds), routes nothing or exactly the
+#     listing's hostname as a custom domain (adding it is the DNS cutover),
+#     and docs/_redirects restores / -> index.html; the GitHub Pages control
+#     files, while still present, are kept out of the Worker and docs/CNAME
+#     names the same host
 #   - the publisher identity is sprue.works: developerName and the public
 #     supportEmail's domain (brand verification checks these against the
 #     verified homepage domain); contactEmail is on the domain too so no
@@ -196,11 +198,23 @@ if (wrangler) {
   const assets = wrangler.assets || {};
   if (assets.directory !== './docs') fail(`wrangler.jsonc assets.directory must be ./docs (got ${assets.directory})`);
   if (assets.html_handling !== 'none') fail(`wrangler.jsonc assets.html_handling must be "none" (got ${assets.html_handling}); any other mode redirects /privacy.html, a URL Google holds`);
+  // Routes: none before the DNS cutover (production is workers.dev only), and
+  // afterwards exactly the listing hostname as a custom domain. Anything else
+  // would move traffic for a hostname this repo does not own -- and a
+  // non-interactive deploy overrides the existing DNS record without asking.
   const routes = Array.isArray(wrangler.routes) ? wrangler.routes : [];
-  if (!routes.some((r) => r && r.pattern === publicHost && r.custom_domain === true)) fail(`wrangler.jsonc routes must include { pattern: "${publicHost}", custom_domain: true }`);
+  const okRoute = (r) => r && r.pattern === publicHost && r.custom_domain === true;
+  if (routes.length && !routes.some(okRoute)) fail(`wrangler.jsonc routes must be { pattern: "${publicHost}", custom_domain: true } (got ${JSON.stringify(routes)})`);
+  for (const r of routes) if (!okRoute(r)) fail(`wrangler.jsonc routes an unexpected pattern: ${JSON.stringify(r)}`);
   if (wrangler.workers_dev !== true || wrangler.preview_urls !== true) fail('wrangler.jsonc must keep workers_dev and preview_urls on (branch previews)');
-  if (!fs.existsSync('docs/.assetsignore') || !/^(?:CNAME|\.nojekyll)$/m.test(fs.readFileSync('docs/.assetsignore', 'utf8'))) fail('docs/.assetsignore must exclude the GitHub Pages control files while they remain');
-  if (!failures) ok(`wrangler.jsonc serves docs/ on ${publicHost} with html_handling none`);
+  // While either GitHub Pages control file is still in docs/, it must be kept
+  // out of the Worker's assets. Once both are gone the ignore file is optional.
+  const pagesFiles = ['CNAME', '.nojekyll'].filter((f) => fs.existsSync(path.join('docs', f)));
+  if (pagesFiles.length) {
+    const ignored = fs.existsSync('docs/.assetsignore') ? fs.readFileSync('docs/.assetsignore', 'utf8').split(/\r?\n/) : [];
+    for (const f of pagesFiles) if (!ignored.includes(f)) fail(`docs/.assetsignore must list ${f} while docs/${f} exists (GitHub Pages control file, not a page)`);
+  }
+  if (!failures) ok(`wrangler.jsonc serves docs/ with html_handling none${routes.length ? ` on ${publicHost}` : ' (no custom domain yet: pre-cutover)'}`);
 }
 if (!fs.existsSync('docs/_redirects') || !/^\/ \/index\.html 200$/m.test(fs.readFileSync('docs/_redirects', 'utf8'))) {
   fail('docs/_redirects must rewrite "/ /index.html 200" (html_handling none does not serve index.html at /)');

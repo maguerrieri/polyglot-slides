@@ -161,10 +161,13 @@ files are what is served.
   `index.html` with a 200. `tools/test-docs-worker.sh` (CI) serves `docs/`
   with `wrangler dev` and fails if any of the three URLs redirects or differs
   from the file; `tools/test-docs-theme.sh` pins the legal pages' wording.
-- **Custom domain and DNS:** declared as a `custom_domain` route in
-  `wrangler.jsonc`; the Worker owns the `polyglot.sprue.works` record. The
-  one-time cutover from GitHub Pages, and the Workers Builds connection, are
-  `marketplace/RUNBOOK.md` §1.
+- **Custom domain and DNS:** `polyglot.sprue.works` becomes a `custom_domain`
+  route in `wrangler.jsonc`, and the Worker then owns its DNS record. Adding
+  that route is the one-time cutover from GitHub Pages — a production deploy
+  replaces the existing record without asking — so it is done in its own PR
+  by a human following `marketplace/RUNBOOK.md` §1c, after the Worker has
+  been verified on its `workers.dev` hostnames. Until then the route is
+  commented out and the live hostname still points at GitHub Pages.
 
 Run it locally the way production does with `npx wrangler dev`.
 
