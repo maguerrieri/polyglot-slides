@@ -1,0 +1,88 @@
+/* Polyglot Slides docs site (polyglot.sprue.works).
+
+   Colours, typefaces, type scale and spacing come from the sprue.works brand
+   theme, https://sprue.works/brand/v1/theme.css, which every page links before
+   this file. This file only maps those --sw-* tokens onto elements; it defines
+   no colour or font of its own, so the site cannot drift from the brand. Every
+   var() carries a fallback (the theme's light-scheme values) so the pages stay
+   readable, if unbranded, when sprue.works is unreachable. Product-specific
+   branding is the icon only; it is an image, not a colour, so nothing here
+   overrides the theme. tools/test-docs-theme.sh enforces all of this. */
+
+body {
+  margin: 0;
+  font-family: var(--sw-font-body, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-size: var(--sw-text-lg, 1.125rem);
+  line-height: var(--sw-leading-normal, 1.5);
+  color: var(--sw-fg, #251818);
+  background: var(--sw-bg, #fff7ed);
+}
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: var(--sw-space-7, 3rem) var(--sw-space-5, 1.5rem) var(--sw-space-8, 4rem);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--sw-space-4, 1rem);
+  margin-bottom: var(--sw-space-5, 1.5rem);
+}
+
+header img {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--sw-radius-lg, 8px);
+}
+
+h1,
+h2 {
+  font-family: var(--sw-font-sprue, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-weight: var(--sw-weight-sprue, 700);
+  line-height: var(--sw-leading-tight, 1.2);
+}
+
+h1 {
+  font-size: var(--sw-text-3xl, 2rem);
+}
+
+header h1 {
+  margin: 0;
+}
+
+h2 {
+  font-size: var(--sw-text-xl, 1.25rem);
+  margin-top: var(--sw-space-6, 2rem);
+}
+
+p.lede {
+  font-size: var(--sw-text-xl, 1.25rem);
+  color: var(--sw-muted, #7d6e69);
+}
+
+.muted {
+  color: var(--sw-muted, #7d6e69);
+}
+
+a {
+  color: var(--sw-accent, #904114);
+}
+
+ul {
+  padding-left: var(--sw-space-5, 1.5rem);
+}
+
+footer {
+  margin-top: var(--sw-space-7, 3rem);
+  padding-top: var(--sw-space-4, 1rem);
+  border-top: 1px solid var(--sw-muted, #7d6e69);
+  color: var(--sw-muted, #7d6e69);
+  font-size: var(--sw-text-sm, 0.875rem);
+}
+
+code {
+  font-family: var(--sw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.95em;
+}
