@@ -1,6 +1,16 @@
 # Deploys src/ to the Apps Script project in .clasp.json.
 #
-#   push to main  -> clasp push (HEAD of the script project == main)
+#   push to main  -> clasp push (HEAD of the script project == main), but only
+#                    when the push touches something clasp ships or this
+#                    pipeline itself (the `paths` filter below). A docs-only
+#                    merge produces NO Deploy run at all -- that silence is the
+#                    intended signal. Trade-off: before the filter every docs
+#                    merge ran clasp push against an unchanged src/, so an auth
+#                    failure there (#51) was red on every merge and masked real
+#                    failures; with it, a change outside the listed paths is
+#                    by definition not something clasp would have pushed.
+#                    GitHub does not evaluate `paths` for tag pushes, so tag
+#                    runs are unaffected; so is workflow_dispatch.
 #   tag v*        -> clasp push + clasp version (tools/release.sh), then open
 #                    a tracking issue: the Marketplace SDK pins a script
 #                    VERSION NUMBER that a human must bump by hand before
@@ -12,15 +22,28 @@
 # via clasp_config_auth (the -A/--auth flag's env form). Apps Script's API
 # does not accept service accounts for script projects, so a user refresh
 # token is the only unattended option; scope the account accordingly. After
-# authenticating, `clasp list-versions` is a read-only preflight for the
-# per-user Apps Script API toggle (script.google.com/home/usersettings): push
-# works without it but version does not, so without the preflight a tag run
-# fails only after its push has landed (#38).
+# authenticating, tools/preflight.sh runs the read-only `clasp list-versions`
+# and diagnoses the two auth failures that look alike in the raw error but
+# have different fixes: the per-user Apps Script API toggle
+# (script.google.com/home/usersettings; push works without it, version does
+# not, so a tag run would otherwise fail only after its push landed, #38) and
+# Workspace session-control rejecting the deploy account's refresh token
+# (`invalid_rapt`; fixed in the Admin console with a trusted-app exemption, not
+# by re-minting the token, #51). Only clasp's own output is printed.
 name: Deploy
 
 on:
   push:
     branches: [main]
+    # Only what clasp pushes or what this pipeline runs; see the header comment.
+    # Not applied to tag pushes (GitHub ignores `paths` for tags), so `v*`
+    # always runs.
+    paths:
+      - 'src/**'
+      - '.clasp.json'
+      - 'tools/release.sh'
+      - 'tools/preflight.sh'
+      - '.github/workflows/deploy.yml'
     tags: ['v*']
   workflow_dispatch:
 
@@ -58,11 +81,14 @@ jobs:
           umask 077
           printf '%s' "$CLASPRC_JSON" > "$clasp_config_auth"
           clasp show-authorized-user
-      - name: Preflight the Apps Script API (per-user toggle)
-        # Read-only. Fails with "User has not enabled the Apps Script API" if
-        # the deploying account never flipped script.google.com/home/usersettings
-        # (README > Release pipeline > One-time setup, step 1).
-        run: clasp list-versions
+      - name: Preflight the Apps Script API (auth + per-user toggle)
+        # Read-only `clasp list-versions`, with the failure diagnosed: an
+        # `invalid_rapt` rejection is Workspace session control (trusted-app
+        # exemption, CLAUDE.md), "User has not enabled the Apps Script API"
+        # is the per-user toggle (README > Release pipeline > One-time setup,
+        # step 1), anything else is printed raw. Prints only clasp's output,
+        # never the credential file.
+        run: tools/preflight.sh
       - name: Push to Apps Script (main)
         if: github.ref_type == 'branch'
         run: clasp push --force

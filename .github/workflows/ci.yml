@@ -24,6 +24,8 @@ jobs:
         run: tools/lint-workflows.sh
       - name: Release script self-test (stubbed clasp)
         run: tools/test-release.sh
+      - name: Deploy preflight self-test (stubbed clasp)
+        run: tools/test-preflight.sh
       - name: Marketplace listing consistency
         run: tools/check-listing.sh
       - name: Listing check self-test
