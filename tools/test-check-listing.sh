@@ -218,8 +218,14 @@ printf 'polyglot-slides.pages.dev\n' >"$work/repo/docs/CNAME"
 expect_fail "stale Pages CNAME" "docs/CNAME must contain polyglot.sprue.works"
 
 fresh
-# Post-cutover cleanup shape: the Pages control files and their ignore file
-# are all gone (RUNBOOK section 1c, last step). Not an error.
+# Pre-cutover, CNAME removed: would drop the live GitHub Pages domain.
+rm "$work/repo/docs/CNAME"
+expect_fail "Pages CNAME removed before the custom domain exists" "must stay until wrangler.jsonc routes"
+
+fresh
+# Post-cutover cleanup shape: the route is declared and the Pages control
+# files and their ignore file are all gone (RUNBOOK section 1c, last step).
+edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works",custom_domain:true}]'
 rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll" "$work/repo/docs/.assetsignore"
 expect_pass "Pages control files and .assetsignore removed after cutover"
 

@@ -276,9 +276,10 @@ about it are not the obvious configuration:
 Until that cutover, `docs/CNAME` and `docs/.nojekyll` stay in the repo:
 GitHub Pages still serves the live hostname from `main:/docs`, and removing
 `CNAME` from the published branch drops its custom domain immediately.
-`docs/.assetsignore` keeps them out of the Worker; `check-listing.sh`
-requires that only while either file exists, and passes once all three are
-gone. Removing them is the last step of RUNBOOK §1c. The old Pages DNS
+`docs/.assetsignore` keeps them out of the Worker. `check-listing.sh`
+enforces the sequencing: while `wrangler.jsonc` declares no route, both
+files must exist and be ignored; once the custom domain is declared, all
+three may go. Removing them is the last step of RUNBOOK §1c. The old Pages DNS
 tooling (`tools/reconcile-pages-dns.sh`, `pages-dns.yml`, the DNS-only
 CNAME rule) was retired in #47; don't recreate it — the Worker's custom
 domain owns the record after the cutover.

@@ -210,6 +210,10 @@ if (wrangler) {
   // While either GitHub Pages control file is still in docs/, it must be kept
   // out of the Worker's assets. Once both are gone the ignore file is optional.
   const pagesFiles = ['CNAME', '.nojekyll'].filter((f) => fs.existsSync(path.join('docs', f)));
+  // ...and they may only go once the custom domain is declared: until the
+  // Worker holds the hostname, GitHub Pages still serves it from main:/docs
+  // and dropping CNAME from the published branch drops the live domain.
+  if (!routes.length && pagesFiles.length < 2) fail(`docs/CNAME and docs/.nojekyll must stay until wrangler.jsonc routes ${publicHost} (RUNBOOK 1c); GitHub Pages is still the live site`);
   if (pagesFiles.length) {
     const ignored = fs.existsSync('docs/.assetsignore') ? fs.readFileSync('docs/.assetsignore', 'utf8').split(/\r?\n/) : [];
     for (const f of pagesFiles) if (!ignored.includes(f)) fail(`docs/.assetsignore must list ${f} while docs/${f} exists (GitHub Pages control file, not a page)`);
