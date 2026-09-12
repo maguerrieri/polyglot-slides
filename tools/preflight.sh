@@ -33,7 +33,7 @@ if [ "$status" -eq 0 ]; then
   exit 0
 fi
 
-echo "$output"
+printf '%s\n' "$output"
 echo
 
 hint() { # hint <message>: the diagnosis, also as an Actions error annotation
