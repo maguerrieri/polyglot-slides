@@ -209,7 +209,12 @@ token — and pins the **text content** of `docs/privacy.html` and
 verification reviews those pages' wording and a change restarts the round
 (#41), so styling work must leave the text byte-identical and CI fails if it
 doesn't. A deliberate wording change regenerates the fixtures in the same
-commit with `tools/test-docs-theme.sh --update-fixtures`.
+commit with `tools/test-docs-theme.sh --update-fixtures`. A wording change
+also **bumps the effective date** on the page it edits (the Changes section
+promises one), even when the brief says to keep everything outside the
+edited sections byte-identical — that rule protects the other sections and
+`terms.html`, not the date line. #49 first left the date stale on that
+reading and the review caught it.
 
 ## QuickLook thumbnails don't scale SVGs with an intrinsic size
 
