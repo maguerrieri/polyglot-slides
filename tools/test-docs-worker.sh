@@ -21,7 +21,8 @@ work="$(mktemp -d)"
 port="${DOCS_WORKER_PORT:-8791}"
 pid=
 cleanup() {
-  [[ -n "$pid" ]] && kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
+  # wait reports wrangler's SIGTERM status; that must not become ours.
+  if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
   rm -rf "$work"
 }
 trap cleanup EXIT
