@@ -18,7 +18,9 @@
 - `marketplace/` — the Workspace Marketplace listing as data: `listing.json`
   (what a human pastes into the Marketplace SDK / consent screen), the icon
   and screenshots, and `RUNBOOK.md` (the click-through). `docs/` is the
-  GitHub Pages site (homepage + privacy + terms) brand verification needs;
+  docs site (homepage + privacy + terms) brand verification needs, served
+  by the Cloudflare Worker in `wrangler.jsonc` (see "The docs site is a
+  Worker" below);
   its look comes from the sprue.works brand theme (see "The docs site is
   styled by the brand theme" below), enforced by `tools/test-docs-theme.sh`.
   `tools/check-listing.sh` is the contract: listing scopes == manifest scopes,
@@ -232,34 +234,36 @@ size, renders, and crops the banner band back out with `sips -c … --cropOffset
 before downsampling. Keep the viewBox aspect equal to the intrinsic aspect,
 and square, whenever qlmanage is the renderer.
 
-## The Pages hostname is one DNS-only CNAME
+## The docs site is a Worker, and `html_handling` must stay `none`
 
-`polyglot.sprue.works` must be exactly one Cloudflare CNAME to
-`sprue-works.github.io` with `proxied=false`. Cloudflare proxying hides the
-Pages target and can block GitHub's domain verification and managed-certificate
-provisioning. `tools/reconcile-pages-dns.sh` is intentionally conservative:
-it creates a missing record and repairs one existing CNAME, but refuses to
-delete or overwrite conflicting A/AAAA/multiple records. Resolve those by hand
-after identifying their owner.
+`docs/` is served by a Cloudflare Worker with static assets (`wrangler.jsonc`,
+deployed by Workers Builds; README "Docs site", RUNBOOK §1). Two things about
+it are not the obvious configuration:
 
-Keep `CLOUDFLARE_API_TOKEN` in GitHub Secrets and `CLOUDFLARE_ZONE_ID` in
-Actions Variables. The token needs only Zone:DNS:Edit and Zone:Read for
-`sprue.works`; never use or document the Global API Key.
+- **`html_handling: "none"`, not the `auto-trailing-slash` default the main
+  sprue.works site uses.** The default answers `/privacy.html` with a
+  `307` to `/privacy` — verified with `wrangler dev` (#47) — and
+  `/privacy.html` / `/terms.html` are the exact URLs Google holds for OAuth
+  verification, where a redirect or 404 restarts the round. `none` serves the
+  `.html` paths as-is but then returns 404 for `/`, so `docs/_redirects`
+  carries `/ /index.html 200` (a rewrite, not a redirect) plus the
+  extensionless paths GitHub Pages used to serve. `tools/test-docs-worker.sh`
+  pins all of it in CI and `tools/check-listing.sh` rejects any other
+  `html_handling` value. Don't "align it with the website repo".
+- **The custom domain cannot be attached while a CNAME exists on the
+  hostname**, so the first production deploy is the DNS cutover itself and
+  fails by design in Workers Builds until a human runs `wrangler deploy`
+  interactively and accepts the override prompt (RUNBOOK §1c). Preview
+  builds (`wrangler versions upload`) never touch domains, so a red
+  production build with green previews is the expected pre-cutover state,
+  not a broken config.
 
-With legacy branch-based Pages, `PUT /repos/{owner}/{repo}/pages` with a new
-`cname` writes `docs/CNAME` directly to the configured publishing branch as an
-automatic `Create CNAME` commit when that file is absent. Prefer merging the
-intended `docs/CNAME` first. If Pages bootstrap must happen before the PR
-merges, fetch and rebase onto the automatic commit before pushing the PR branch.
-
-GitHub only requests the managed certificate when the custom domain is *saved
-while DNS already resolves*. If the domain was configured before the CNAME
-existed (the normal order for this repo: Pages first, `pages-dns.yml` after
-merge), `https_certificate` stayed `null` for 30+ minutes with no sign of progress,
-and re-sending the same `cname` does nothing. Clear it and re-add it, all
-against `PUT /repos/{owner}/{repo}/pages`:
-
-1. `{"cname": null}`
-2. `{"cname": "polyglot.sprue.works"}` — the cert reached `approved` within
-   a minute.
-3. `{"https_enforced": true}`
+Until that cutover, `docs/CNAME` and `docs/.nojekyll` stay in the repo:
+GitHub Pages still serves the live hostname from `main:/docs`, and removing
+`CNAME` from the published branch drops its custom domain immediately.
+`docs/.assetsignore` keeps them out of the Worker; `check-listing.sh` only
+checks `CNAME`'s content while the file exists and passes once both are
+gone. Removing them is the last step of RUNBOOK §1c. The old Pages DNS
+tooling (`tools/reconcile-pages-dns.sh`, `pages-dns.yml`, the DNS-only
+CNAME rule) was retired in #47; don't recreate it — the Worker's custom
+domain owns the record.

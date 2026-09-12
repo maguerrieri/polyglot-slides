@@ -57,15 +57,15 @@ the sidebar, persisted via `UserProperties`; the offered list is
 - `tools/sync-template.sh` — push `src/` to the template deck's bound script
 - `tools/release.sh` — cut a numbered script version for a tagged release (CI and local)
 - `tools/check-listing.sh`, `tools/render-icons.sh` — Marketplace listing consistency check and icon rendering; both use `tools/png-check.js` to verify the icon artwork fills its canvas
-- `tools/reconcile-pages-dns.sh` — idempotent Cloudflare check/apply for the DNS-only Pages CNAME
+- `wrangler.jsonc` — the Cloudflare Worker that serves `docs/` (see [Docs site](#docs-site)); `tools/test-docs-worker.sh` pins what it serves
 - `marketplace/` — Marketplace listing config, assets, and the publishing runbook
-- `docs/` — GitHub Pages site: homepage, privacy policy, terms (brand verification); styled by the sprue.works brand theme via `docs/site.css`, checked by `tools/test-docs-theme.sh`
+- `docs/` — the docs site: homepage, privacy policy, terms (brand verification); styled by the sprue.works brand theme via `docs/site.css`, checked by `tools/test-docs-theme.sh`
 - `tools/lint.sh`, `tools/lint-workflows.sh`, `tools/test-*.sh` — what the CI
   workflow runs
 - `.github/workflows/` — `ci.yml` (lint on PRs), `deploy.yml` (push on
   `main`; on `v*` tags cut a version and open the "bump script version"
-  tracking issue), and `pages-dns.yml` (manual
-  Cloudflare CNAME check/apply)
+  tracking issue). The docs site deploys from Cloudflare Workers Builds,
+  not from Actions ([Docs site](#docs-site))
 - `INSTALL.md` — end-user install runbook (and the owner-side sharing setup)
 
 ## Develop
@@ -120,7 +120,7 @@ pastes it:
   sizes plus `docs/icon.png` by `tools/render-icons.sh`) and, once captured, the 1280×800
   screenshots listed in `marketplace/screenshots.json`.
 - `docs/` — the homepage, privacy policy, and terms of service served by
-  GitHub Pages; brand verification requires them. Their colours and type come
+  a Cloudflare Worker ([Docs site](#docs-site)); brand verification requires them. Their colours and type come
   from the sprue.works brand theme (`https://sprue.works/brand/v1/theme.css`)
   through `docs/site.css`; `tools/test-docs-theme.sh` keeps that so and pins
   the legal pages' wording, which OAuth verification reviews.
@@ -128,7 +128,7 @@ pastes it:
 What stays manual — Google has no write API for any of it — is a one-time
 click-through documented step by step in
 **[marketplace/RUNBOOK.md](marketplace/RUNBOOK.md)**: pick private-domain vs.
-unlisted, enable Pages, attach the script to a GCP project, fill the OAuth
+unlisted, connect the docs Worker, attach the script to a GCP project, fill the OAuth
 consent screen and Marketplace SDK from `listing.json`, capture screenshots,
 publish, and verify from a second account. The listing pins a **script
 version number**; after each release someone bumps that field (no re-review
@@ -137,6 +137,36 @@ for a version bump alone) before installed users see the new code.
 **Until the listing is live**, the template-deck flow in
 [INSTALL.md](INSTALL.md) remains the install path (and the dev/testing path
 afterwards); push `src/` changes into it with `tools/sync-template.sh`.
+
+## Docs site
+
+`docs/` (https://polyglot.sprue.works: homepage, privacy policy, terms) is a
+**Cloudflare Worker with static assets** — assets only, no script — configured
+in `wrangler.jsonc` and deployed by **Workers Builds** from this repo, the
+same setup as sprue-works/website. There is no build step; the committed
+files are what is served.
+
+- **Production:** every push to `main` runs `npx wrangler deploy` and serves
+  https://polyglot.sprue.works (also reachable at
+  `https://polyglot-slides.igneus-fdc.workers.dev`).
+- **Previews:** every other branch runs `npx wrangler versions upload`, which
+  publishes a preview aliased by branch name at
+  `https://<alias>-polyglot-slides.igneus-fdc.workers.dev`, where `<alias>` is
+  the branch name lowercased with `/` replaced by `-`. PRs get the URL as a
+  Workers Builds comment. Check a docs change there, not on `main`.
+- **Exact URLs are load-bearing.** `/privacy.html` and `/terms.html` are the
+  URLs pasted into the OAuth consent screen and the Marketplace listing, so
+  `wrangler.jsonc` sets `html_handling` to `none` (the default would 307 them
+  to the extensionless path) and `docs/_redirects` rewrites `/` to
+  `index.html` with a 200. `tools/test-docs-worker.sh` (CI) serves `docs/`
+  with `wrangler dev` and fails if any of the three URLs redirects or differs
+  from the file; `tools/test-docs-theme.sh` pins the legal pages' wording.
+- **Custom domain and DNS:** declared as a `custom_domain` route in
+  `wrangler.jsonc`; the Worker owns the `polyglot.sprue.works` record. The
+  one-time cutover from GitHub Pages, and the Workers Builds connection, are
+  `marketplace/RUNBOOK.md` §1.
+
+Run it locally the way production does with `npx wrangler dev`.
 
 ## Release pipeline
 

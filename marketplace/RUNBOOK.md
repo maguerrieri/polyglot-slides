@@ -13,7 +13,7 @@ Paste sources, so nothing is retyped:
 |---|---|
 | App name, short description, category, developer name, support + contact emails | `marketplace/listing.json` → `app` |
 | Detailed description | `marketplace/description.md` |
-| Homepage / privacy policy / terms URLs | `listing.json` → `urls` (served from `docs/` by GitHub Pages) |
+| Homepage / privacy policy / terms URLs | `listing.json` → `urls` (served from `docs/` by the Cloudflare Worker in `wrangler.jsonc`) |
 | OAuth scopes | `listing.json` → `oauth.scopes` (== `src/appsscript.json`) |
 | App icon 128×128 / 32×32, consent-screen logo 120×120 | `marketplace/assets/icon-*.png` |
 | Screenshots 1280×800 | `marketplace/assets/` + `marketplace/screenshots.json` (step 7) |
@@ -40,91 +40,128 @@ the same school Workspace domain?* Yes → `private` (set
 `distribution.privateDomain` to the domain). Mixed / personal Gmail → `unlisted`.
 The steps below are written for `unlisted` and mark what `private` skips.
 
-## 1. Publish the static pages (GitHub Pages)
+## 1. Publish the static pages (Cloudflare Worker)
 
 The homepage, privacy policy, and terms of service in `docs/` are required
-fields on the consent screen and the listing. `docs/CNAME` pins the custom
-domain in the published branch so later Pages builds cannot silently clear it.
+fields on the consent screen and the listing. They are served by a
+**Cloudflare Worker with static assets** (assets only, no script) configured
+in `wrangler.jsonc` and deployed by **Workers Builds** from this repo, the
+same arrangement as sprue-works/website. Production is `main`; every other
+branch gets a preview URL (README "Docs site"). CI pins what Google depends
+on: `tools/test-docs-worker.sh` serves `docs/` with `wrangler dev` and checks
+that `/`, `/privacy.html`, and `/terms.html` answer 200 with no redirect and
+byte-identical bodies; `tools/check-listing.sh` checks the config routes
+`polyglot.sprue.works` and keeps `html_handling` at `none`.
 
-### 1a. Enable Pages and record the custom domain
+Until the cutover in 1c has happened, the *live* site is still the legacy
+GitHub Pages build of `main:/docs` behind a DNS-only Cloudflare CNAME to
+`sprue-works.github.io`. The two coexist: nothing in 1a–1b touches the live
+hostname.
 
-One-time, from a repo admin:
+### 1a. Connect the repo to Workers Builds (one-time)
 
-```bash
-gh api -X POST repos/sprue-works/polyglot-slides/pages \
-  -f build_type=legacy -f 'source[branch]=main' -f 'source[path]=/docs'
+From an account with access to the sprue.works Cloudflare account:
 
-gh api -X PUT repos/sprue-works/polyglot-slides/pages \
-  -f cname=polyglot.sprue.works
-```
+1. Cloudflare dashboard → Workers & Pages → Create → **Continue with GitHub**
+   → the Cloudflare GitHub App is already authorised for the `sprue-works`
+   org from the website; select `sprue-works/polyglot-slides`.
+2. Worker name **`polyglot-slides`** (must match `name` in `wrangler.jsonc`),
+   production branch `main`, no build command, deploy command left at the
+   default. Create and deploy.
+3. In the Worker: Settings → Build → enable **non-production branch builds**
+   and **pull request comments**. Settings → Domains & Routes should show the
+   `workers.dev` route and preview URLs enabled, from `wrangler.jsonc`.
 
-If Pages is already enabled, the first command returns an "already exists"
-error; confirm *Settings → Pages → Deploy from a branch → `main` / `/docs`*
-instead of recreating it. On legacy branch-based Pages, the custom-domain API
-creates `docs/CNAME` directly on `main` as an automatic `Create CNAME` commit if
-the file is absent. Merge the intended `docs/CNAME` first when possible; if the
-API runs first, fetch that commit and rebase any open setup PR onto it.
+**Expect the production build to fail** at its last step until 1c is done.
+`wrangler deploy` uploads the assets, then tries to attach the
+`polyglot.sprue.works` custom domain, and Cloudflare refuses to create a
+Custom Domain on a hostname that already has a CNAME record. That is the
+GitHub Pages CNAME, and removing it *is* the cutover. Branch builds run
+`wrangler versions upload`, which never touches domains, so previews work
+from the first push.
 
-### 1b. Bootstrap and reconcile Cloudflare DNS
+### 1b. Verify the Worker on its own hostnames
 
-GitHub Pages needs exactly one DNS-only CNAME from `polyglot.sprue.works` to
-`sprue-works.github.io`. The manually dispatched `Pages DNS` workflow calls
-`tools/reconcile-pages-dns.sh`: `check` is read-only; `apply` creates a missing
-record or corrects a single drifted CNAME. It deliberately stops on A/AAAA,
-non-CNAME, or multiple records rather than deleting unrelated DNS.
+Before touching DNS, prove the Worker serves the pages exactly as Pages does:
 
-The token currently used by `maguerrieri/toolbox` cannot be read back or copied
-between repositories by GitHub or automation. A human must either enter the
-original token or rotate it:
+1. Open the PR's preview URL (the Workers Builds comment, or
+   `https://<branch-alias>-polyglot-slides.igneus-fdc.workers.dev/`) and,
+   after the merge, the production copy at
+   `https://polyglot-slides.igneus-fdc.workers.dev/`.
+2. From a checkout of `main`, compare bytes and status codes for the URLs
+   Google holds:
 
-1. In Cloudflare, create an API token restricted to the `sprue.works` zone with
-   **Zone → DNS → Edit** and **Zone → Zone → Read** only. Do not use the Global
-   API Key.
-2. Copy the zone ID from the `sprue.works` zone overview into the non-secret
-   repository variable **`CLOUDFLARE_ZONE_ID`**.
-3. Store the token as the repository secret **`CLOUDFLARE_API_TOKEN`**. Enter it
-   directly in GitHub; never paste it into an issue, log, command argument, or
-   committed file.
-4. In *Settings → Environments*, confirm the **`pages-dns`** environment allows
-   deployments only from the selected branch `main`. The workflow also checks
-   out `main` explicitly, so a manual dispatch from another ref cannot substitute
-   code that receives the token.
-5. Run *Actions → Pages DNS → Run workflow → apply* against `main`, then run it
-   again in `check` mode to prove the result is idempotent.
+   ```bash
+   host=polyglot-slides.igneus-fdc.workers.dev
+   for p in / /privacy.html /terms.html; do
+     curl -s -o /dev/null -w "$p %{http_code} %{redirect_url}\n" "https://$host$p"
+   done
+   curl -s "https://$host/" | cmp - docs/index.html
+   curl -s "https://$host/privacy.html" | cmp - docs/privacy.html
+   curl -s "https://$host/terms.html" | cmp - docs/terms.html
+   ```
 
-CLI equivalents when the values are already held securely in the shell are:
+   Every line must be `200` with an empty redirect URL and every `cmp`
+   silent. A `307` here means `html_handling` drifted from `none`.
 
-```bash
-gh variable set CLOUDFLARE_ZONE_ID -R sprue-works/polyglot-slides
-gh secret set CLOUDFLARE_API_TOKEN -R sprue-works/polyglot-slides
-gh workflow run pages-dns.yml -R sprue-works/polyglot-slides --ref main -f mode=apply
-```
+### 1c. Cut over DNS from GitHub Pages (production-affecting; a human does this)
 
-Both `gh ... set` commands read the value from standard input; do not put the
-value on the command line.
+Google's reviewers fetch `https://polyglot.sprue.works/privacy.html` and
+`/terms.html` by exactly those URLs while verification is in progress, so
+the switch has to be one atomic record change, not a delete-then-add.
+Cloudflare's Custom Domain attach can replace the existing record in one
+API call, and `wrangler deploy` run **interactively** offers exactly that:
 
-### 1c. Verify the organization domain and HTTPS
+1. From a checkout of `main`, signed in to the sprue.works Cloudflare account:
 
-To prevent another repository from claiming the hostname, an organization
-owner must open *Sprue Works organization Settings → Pages → Verified domains*,
-add `sprue.works`, and copy GitHub's generated TXT name and token into a
-DNS-only Cloudflare TXT record. The name/token are generated per organization
-and cannot be invented in this repository. Return to GitHub and click
-**Verify** after the TXT record resolves.
+   ```bash
+   npx wrangler@4 login
+   npx wrangler@4 deploy
+   ```
 
-After the Pages certificate reaches `approved`, enable HTTPS in *Settings →
-Pages* or with:
+   Wrangler uploads the assets, detects the existing CNAME on
+   `polyglot.sprue.works`, and asks whether to **override the existing DNS
+   record**. Answer yes. Cloudflare swaps the CNAME for the Worker's own
+   proxied record and the certificate (Universal SSL already covers the
+   first-level subdomain), so the hostname never resolves to nothing.
+   Wrangler refuses this in non-interactive runs, which is why Workers Builds
+   could not do it.
 
-```bash
-gh api -X PUT repos/sprue-works/polyglot-slides/pages -F https_enforced=true
-```
+   If the prompt does not appear (wrangler behaviour changed), **stop** rather
+   than deleting the CNAME by hand: a dashboard delete-then-add leaves the
+   hostname unresolvable for the gap between the two, and one 404 seen by a
+   reviewer costs a multi-day review round. Fall back to the Cloudflare API's
+   attach-domain call with `override_existing_dns_record` set, or ask in
+   sprue-works/website how its domains were first attached.
 
-Certificate provisioning can take time after DNS is correct. Confirm all three
-pages resolve with a valid certificate:
+2. Verify the live hostname the same way as 1b, with
+   `host=polyglot.sprue.works`, plus one request through a resolver that has
+   not cached the old answer (`curl --resolve` against a Cloudflare edge IP,
+   or a phone off wifi). The Pages CNAME had a 1-second TTL, so the switch is
+   visible within seconds.
 
-- https://polyglot.sprue.works/
-- https://polyglot.sprue.works/privacy.html
-- https://polyglot.sprue.works/terms.html
+3. Retry the failed Workers Builds production build (Worker → Deployments →
+   Retry) so `main` is green, then push a trivial branch to confirm previews
+   still comment on the PR.
+
+4. Switch GitHub Pages off so it cannot be re-pointed at the hostname:
+
+   ```bash
+   gh api -X DELETE repos/sprue-works/polyglot-slides/pages
+   ```
+
+   Organization Settings → Pages → Verified domains may keep `sprue.works`;
+   it is harmless and blocks another repo from claiming the hostname on
+   GitHub's side.
+
+5. Open the post-cutover cleanup PR: delete `docs/CNAME`, `docs/.nojekyll`
+   and the two lines that name them in `docs/.assetsignore` (the
+   `check-listing.sh` self-test already covers that shape); delete the
+   **`pages-dns`** environment and the `CLOUDFLARE_API_TOKEN` secret /
+   `CLOUDFLARE_ZONE_ID` variable in repo settings (nothing reads them any
+   more, and the token can be revoked in Cloudflare); drop the
+   "Until the cutover" paragraph above and this step. Nothing in that PR
+   touches a served byte, so the URLs stay as they are.
 
 **Brand verification needs proof you own the homepage's domain.** Add
 `sprue.works` to Search Console and complete its DNS verification before the
@@ -280,7 +317,7 @@ Every claim on the page must be true to `src/Code.js` and `src/Sidebar.html`
 (no server, one user property, `LanguageApp` only, the open presentation
 only); do not pad it with retention periods or certifications that don't
 exist. Bump the effective date when the page changes. If a round rejects the
-policy, fix the page, confirm the Pages rebuild published it, resubmit in the
+policy, fix the page, confirm the Workers Builds deploy of `main` published it, resubmit in the
 Verification Center, **and reply to Google's email** — verification does not
 continue without the reply.
 
@@ -449,5 +486,5 @@ without copying anything. Re-run INSTALL.md's functional checklist from there.
 | Code in `src/` | push on merge; tag → new numbered version + a tracking issue for the bump | **bump *Slides add-on script version* in step 4 to the new number and close the tracking issue** — until then installed users keep the old version. No re-review for a version bump alone |
 | `oauthScopes` in `appsscript.json` | CI fails until `listing.json` matches | update consent screen + Marketplace SDK scopes; re-verification |
 | Name, icon, description | `check-listing.sh` validates the files | re-paste (steps 3–5); name/logo changes re-trigger brand verification |
-| `docs/privacy.html` wording (also `terms.html`) | Pages redeploys on merge; `check-listing.sh` checks the URL resolves to the file; `test-docs-theme.sh` fails until the text fixture is regenerated (`--update-fixtures`), so a wording change is always deliberate | walk the five-disclosure checklist (step 3); the URL is unchanged so nothing to re-paste, but a pending verification round needs a resubmit + email reply. Styling-only changes leave the text pinned and need nothing |
+| `docs/privacy.html` wording (also `terms.html`) | the PR gets a preview at `https://<branch-alias>-polyglot-slides.igneus-fdc.workers.dev/privacy.html` (Workers Builds comment); Workers Builds redeploys `main` on merge; `check-listing.sh` checks the URL resolves to the file; `test-docs-worker.sh` checks it is served 200 without a redirect; `test-docs-theme.sh` fails until the text fixture is regenerated (`--update-fixtures`), so a wording change is always deliberate | walk the five-disclosure checklist (step 3); the URL is unchanged so nothing to re-paste, but a pending verification round needs a resubmit + email reply. Styling-only changes leave the text pinned and need nothing |
 | `developerName`, `supportEmail`, `contactEmail` | `check-listing.sh` enforces `sprue.works` / an `@sprue.works` support address | re-paste (steps 3–5); a publisher-name or support-email change re-triggers brand verification |

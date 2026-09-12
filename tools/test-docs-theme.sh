@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The docs/ Pages site takes its look from the sprue.works brand theme
+# The docs/ site takes its look from the sprue.works brand theme
 # (https://sprue.works/brand/v1/theme.css; usage notes in brand/README.md of
 # sprue-works/website). This check keeps that adoption honest, and keeps the
 # legal pages' wording pinned while OAuth verification reviews them:
