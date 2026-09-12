@@ -124,8 +124,38 @@ Consequences, so nobody "fixes" this back:
   fails (`User has not enabled the Apps Script API`) — so a green
   push-to-main deploy is not proof the account can cut versions. The
   `v1.0.1` tag run after #36 failed exactly that way. `deploy.yml` runs
-  `clasp list-versions` right after auth as a preflight (#38); if that step
-  fails, the fix is the toggle, not the token.
+  `tools/preflight.sh` (`clasp list-versions`) right after auth (#38); if it
+  reports the toggle error, the fix is the toggle, not the token.
+- **`invalid_rapt` at the preflight is Workspace session control, not the
+  toggle and not a bad token (#51).** Every push-to-main deploy from
+  2026-09-11 to 2026-09-12 failed at the preflight with
+  `{"error":"invalid_grant","error_description":"reauth related error
+  (invalid_rapt)", ...}`. Since #36 the `CLASPRC_JSON` token belongs to the
+  `@sprue.works` account, and a Workspace account under a Google Cloud
+  session-control policy must periodically re-authenticate interactively,
+  which a headless runner cannot do. Personal Gmail accounts never hit this,
+  which is why the pipeline worked before #36. Re-minting the token is *not*
+  the fix: a fresh token buys exactly one session and then fails the same
+  way. The fix is in the Admin console, and is narrower than exempting the
+  account or OU (the reauth policy stays in force for everything else):
+  1. *Security → Access and data control → Google Cloud session control* →
+     enable **Never require reauthentication for trusted apps**;
+  2. *Security → API controls → App access control* → mark **clasp's OAuth
+     client as a trusted app**.
+  No re-mint was needed afterwards; the re-run of the failed run succeeded.
+  `tools/preflight.sh` recognises `invalid_rapt` and prints this pointer;
+  `tools/test-preflight.sh` pins that mapping with a stubbed clasp.
+- **Docs-only merges no longer produce a Deploy run at all (#51).** The
+  `push: branches: [main]` trigger carries a `paths` filter (`src/**`,
+  `.clasp.json`, `tools/release.sh`, `tools/preflight.sh`, the workflow
+  itself). Before it, every docs merge ran `clasp push` against an unchanged
+  `src/`, so an auth failure was red on every merge and masked real ones. No
+  Deploy run after a README change is the intended signal, not a broken
+  trigger. GitHub does not evaluate `paths` for tag pushes, so `v*` and
+  `workflow_dispatch` always run; `track-version-bump` is unchanged (it
+  already gates on `github.ref_type == 'tag'`). Anything new that clasp
+  ships or the pipeline runs must be added to that list, or pushes touching
+  only it will silently not deploy.
 - GitHub Actions expression contexts are placement-sensitive: `runner.*` is
   unavailable in job-level `env`, even though the file is valid YAML. Run
   `tools/lint-workflows.sh` after workflow edits; it uses actionlint to catch

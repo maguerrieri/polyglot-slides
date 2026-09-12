@@ -146,7 +146,7 @@ GitHub Actions does the pushing.
 | Event | Workflow | What happens |
 |---|---|---|
 | Pull request | `ci.yml` | App/JSON and Marketplace-listing consistency checks, Actions-aware workflow validation, and stubbed self-tests for release/listing tooling |
-| Push to `main` | `deploy.yml` | `clasp push --force` — the script project's HEAD now matches `main` |
+| Push to `main` touching `src/`, `.clasp.json`, `tools/release.sh`, `tools/preflight.sh`, or the workflow | `deploy.yml` | `clasp push --force` — the script project's HEAD now matches `main`. A merge that touches none of those (docs, tooling) produces **no Deploy run**; that silence is intended, not a broken trigger |
 | Tag `v*` pushed | `deploy.yml` | `tools/release.sh <tag>`: push, then `clasp version "<tag>"`. Nothing is deployed — the Marketplace pins a version *number*. **The number it prints is what a human then pastes into Marketplace SDK → App Configuration → *Slides add-on script version*** (RUNBOOK §4); the workflow opens a tracking issue for that bump |
 
 Cut a release:
@@ -187,30 +187,45 @@ as editor, and ownership cannot be transferred to it later (see `CLAUDE.md`).
    the deploying account itself can flip it. `clasp push` works without it;
    `clasp version` does not — the first tag after #36 failed there with
    `User has not enabled the Apps Script API` after a successful push. The
-   workflow runs `clasp list-versions` right after authenticating so a
-   missing toggle fails every deploy at auth setup, not the tag job after
-   its push.
-2. On a machine with clasp 3 installed, log in as the deploying account:
+   workflow runs `tools/preflight.sh` (`clasp list-versions`) right after
+   authenticating so a missing toggle fails every deploy at auth setup, not
+   the tag job after its push.
+2. **Workspace accounts only:** exempt clasp from Google Cloud session
+   control *before* minting the token. A Workspace account under a
+   session-control policy must re-authenticate interactively on a schedule,
+   which a headless runner cannot do; the deploy then fails at the preflight
+   with `invalid_grant` / `invalid_rapt`, and a freshly minted token fails
+   the same way after one session. In the Admin console: *Security → Access
+   and data control → Google Cloud session control* → enable **Never require
+   reauthentication for trusted apps**, then *Security → API controls → App
+   access control* → mark **clasp's OAuth client as a trusted app**. This is
+   narrower than exempting the account or OU; the policy stays in force for
+   everything except clasp. Personal Gmail accounts have no such policy and
+   can skip this step.
+3. On a machine with clasp 3 installed, log in as the deploying account:
    `clasp login` (add `--no-localhost` on a headless box). Check with
    `clasp show-authorized-user`.
-3. Copy the resulting `~/.clasprc.json` **verbatim** — the whole file,
+4. Copy the resulting `~/.clasprc.json` **verbatim** — the whole file,
    including `{"tokens":{"default":{...}}}` — into a repo secret named
    **`CLASPRC_JSON`**: *Settings → Secrets and variables → Actions → New
    repository secret*, or
    `gh secret set CLASPRC_JSON < ~/.clasprc.json`.
    The workflow writes the secret to a temp file and passes it to clasp via
    `clasp_config_auth`.
-4. (Optional) The job runs in the `apps-script` environment. GitHub creates it
+5. (Optional) The job runs in the `apps-script` environment. GitHub creates it
    on the first run; add required reviewers or a `main`/tag deployment-branch
    rule there if you want an approval gate on deploys.
-5. Push to `main` (or re-run the *Deploy* workflow from the Actions tab via
-   *Run workflow*) and confirm `clasp show-authorized-user` in the log shows
-   the expected account and the `clasp list-versions` preflight passes.
+6. Re-run the *Deploy* workflow from the Actions tab via *Run workflow* (a
+   push to `main` only triggers it when it touches `src/` or the pipeline
+   files) and confirm `clasp show-authorized-user` in the log shows the
+   expected account and the `tools/preflight.sh` step passes.
 
 The refresh token stays valid until revoked or the account's password / 2SV
-setup changes; if a deploy fails on auth, redo steps 2–3. If it fails at
-`clasp list-versions` with `User has not enabled the Apps Script API`, the
-deploying account skipped step 1. If the project's
+setup changes; if a deploy fails on auth, redo steps 3–4. The preflight step
+names the two failures that look alike: `User has not enabled the Apps Script
+API` means the deploying account skipped step 1; `invalid_rapt` means
+Workspace session control rejected the token and the fix is step 2, not a
+re-mint (the token is fine; see `CLAUDE.md`). If the project's
 OAuth consent screen (runbook step 3) is in *Testing*, Google expires
 refresh tokens after 7 days — the deploying account's login uses clasp's own
 client, not the project's, so that limit does not apply here.
