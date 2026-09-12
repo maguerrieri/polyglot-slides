@@ -263,18 +263,33 @@ section for **each** of these, in these words:
 
 - [ ] what **Google user data** the app **accesses** (each scope, in plain
       words, plus what it does *not* access);
-- [ ] how the app **uses** Google user data (the one purpose; Limited Use
-      statement);
+- [ ] how the app **uses** Google user data — itemised **per data type**:
+      each kind of data accessed, the use it is put to, and the user-facing
+      feature it serves, plus the Limited Use statement (a single "one
+      purpose" paragraph was graded as missing in round 2);
 - [ ] with whom the app **shares, transfers, or discloses** Google user data
       (every transfer named — for us, the text sent to Google Translate via
       `LanguageApp` — and an explicit "no one else");
-- [ ] how the app **protects** Google user data (where it runs, what the
-      developer can and cannot access, what is stored where);
+- [ ] how the app **protects** Google user data — named **protection
+      mechanisms** (encryption in transit and at rest, access control /
+      least privilege, credential handling, data minimisation, incident
+      response, public source), and the word **sensitive**: say which scope
+      Google classifies as sensitive and that the mechanisms cover it (round 2
+      graded the prose version, which said where it runs and what the
+      developer cannot access, as "does not specify any data protection
+      mechanisms for sensitive data");
 - [ ] **retention and deletion** of Google user data (what is kept, for how
       long, how the user gets rid of it);
 - [ ] the **AI/ML model-training disclosure** the sensitive-scope email lists
       as a requirement: the app does not use Google user data to develop,
       improve, or train generalized AI/ML models.
+
+Verification round 2 (2026-09-12, #49) read the #41 rewrite and cleared the
+accesses, shares, and retention findings, leaving two: "does not state how
+your application uses Google user data" and "does not specify any data
+protection mechanisms for sensitive data". So a section that exists under the
+right heading is not enough on its own — the reviewer also wants the
+itemisation described above in the *uses* and *protects* bullets.
 
 Every claim on the page must be true to `src/Code.js` and `src/Sidebar.html`
 (no server, one user property, `LanguageApp` only, the open presentation
