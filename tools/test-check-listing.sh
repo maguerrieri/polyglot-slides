@@ -251,6 +251,16 @@ fresh_pre
 expect_fail "DNS record retargeted" "must keep pointing at sprue-works.github.io"
 
 fresh_pre
+# Route moved to another zone (first zone_id in the file after the variable
+# block is the record's; the route's is the last one).
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";let s=fs.readFileSync(f,"utf8");const i=s.lastIndexOf("zone_id = var.zone_id");s=s.slice(0,i)+"zone_id = \"deadbeef\""+s.slice(i+"zone_id = var.zone_id".length);fs.writeFileSync(f,s)')
+expect_fail "route in another zone" "route zone_id must be var.zone_id"
+
+fresh_pre
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/default\s*=\s*"0a2832ed293070b06bd75cb7fc8db4d7"/,"default     = \"00000000000000000000000000000000\""))')
+expect_fail "zone_id default drifted" 'variable "zone_id" must default to the sprue.works zone'
+
+fresh_pre
 # CNAME still present but no longer kept out of the Worker's assets.
 rm "$work/repo/docs/.assetsignore"
 expect_fail "Pages control file would be served by the Worker" "docs/.assetsignore must list CNAME"

@@ -238,11 +238,16 @@ if (wrangler) {
     const tfDefault = (name) => (tfMain.match(new RegExp(`variable\\s+"${name}"[\\s\\S]*?default\\s*=\\s*"([^"]*)"`)) || [])[1];
     if (tfDefault('hostname') !== publicHost) fail(`terraform/main.tf variable "hostname" must default to ${publicHost} (got ${tfDefault('hostname')})`);
     if (tfDefault('worker_name') !== wrangler.name) fail(`terraform/main.tf variable "worker_name" must default to wrangler.jsonc's name ${wrangler.name} (got ${tfDefault('worker_name')})`);
+    // The sprue.works zone (the same value the retired reconciler used via
+    // the CLOUDFLARE_ZONE_ID variable). Both resources must live in it.
+    const ZONE_ID = '0a2832ed293070b06bd75cb7fc8db4d7';
+    if (tfDefault('zone_id') !== ZONE_ID) fail(`terraform/main.tf variable "zone_id" must default to the sprue.works zone ${ZONE_ID} (got ${tfDefault('zone_id')})`);
     const route = tfMain.match(/resource\s+"cloudflare_workers_route"\s+"[^"]+"\s*\{([\s\S]*?)\n\}/);
     if (!route) fail('terraform/main.tf must declare a cloudflare_workers_route for the hostname (the cutover has nothing to route to otherwise)');
     else {
       const body = route[1];
       if (!/count\s*=\s*var\.cutover\s*\?\s*1\s*:\s*0/.test(body)) fail('the cloudflare_workers_route must be keyed on var.cutover (count = var.cutover ? 1 : 0)');
+      if (!/\bzone_id\s*=\s*var\.zone_id\b/.test(body)) fail('the cloudflare_workers_route zone_id must be var.zone_id');
       if (!/pattern\s*=\s*"\$\{var\.hostname\}\/\*"/.test(body)) fail('the cloudflare_workers_route pattern must be "${var.hostname}/*"');
       if (!/script\s*=\s*var\.worker_name\b/.test(body)) fail('the cloudflare_workers_route script must be var.worker_name');
     }
@@ -253,6 +258,7 @@ if (wrangler) {
     if (!record) fail('terraform/main.tf must declare the cloudflare_dns_record for the hostname');
     else {
       const body = record[1];
+      if (!/\bzone_id\s*=\s*var\.zone_id\b/.test(body)) fail('the cloudflare_dns_record zone_id must be var.zone_id');
       if (!/\bname\s*=\s*var\.hostname\b/.test(body)) fail('the cloudflare_dns_record name must be var.hostname');
       if (!/\btype\s*=\s*"CNAME"/.test(body)) fail('the cloudflare_dns_record must stay a CNAME (a type change is a replacement the hostname cannot afford)');
       if (!/\bcontent\s*=\s*"sprue-works\.github\.io"/.test(body)) fail('the cloudflare_dns_record must keep pointing at sprue-works.github.io (GitHub Pages is the origin until the route is in front)');
