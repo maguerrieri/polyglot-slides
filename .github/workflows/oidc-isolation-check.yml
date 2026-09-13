@@ -1,0 +1,71 @@
+name: OIDC isolation check
+
+# Confirms that the workload identity provider from sprue-works/infrastructure
+# rejects every ref of this repository except refs/heads/main. Dispatch it from
+# a branch other than main: the run passes only when Google's STS endpoint
+# answers the token exchange with the specific attribute-condition rejection.
+# Dispatched from main the job is skipped, since main is meant to be accepted
+# and the real apply job already proves that path.
+#
+# This workflow deliberately references no secrets and never runs Terraform.
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  identity-check:
+    name: Confirm this ref is rejected
+    if: "github.ref != 'refs/heads/main'"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+    steps:
+      - name: Exchange this ref's OIDC token and assert the rejection
+        run: |
+          set -eu
+          if [ -z "${PROVIDER}" ]; then
+            echo "::error::Repository variable GCP_WORKLOAD_IDENTITY_PROVIDER is not set; cannot test the provider condition."
+            exit 2
+          fi
+          audience="https://iam.googleapis.com/${PROVIDER}"
+          jwt="$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}" | jq -r '.value')"
+          if [ -z "${jwt}" ] || [ "${jwt}" = "null" ]; then
+            echo "::error::GitHub did not mint an OIDC token; check id-token: write."
+            exit 2
+          fi
+          body="$(jq -n --arg aud "//iam.googleapis.com/${PROVIDER}" --arg tok "${jwt}" '{
+            grantType: "urn:ietf:params:oauth:grant-type:token-exchange",
+            audience: $aud,
+            scope: "https://www.googleapis.com/auth/cloud-platform",
+            requestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+            subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+            subjectToken: $tok }')"
+          status="$(curl -sS -o sts.json -w '%{http_code}' -X POST https://sts.googleapis.com/v1/token \
+            -H 'Content-Type: application/json' --data "${body}")"
+          case "${status}" in
+            200)
+              echo "::error::The provider accepted the ${GITHUB_REF} subject. Only refs/heads/main should be trusted; treat this as an incident for the state bucket."
+              exit 1 ;;
+            400|403)
+              # STS has reported attribute-condition rejections as both
+              # 400 invalid_grant and 403 unauthorized_client; the message is
+              # the stable part, so it is the assertion.
+              if grep -q 'rejected by the attribute condition' sts.json; then
+                echo "The provider rejected the ${GITHUB_REF} subject by its attribute condition (HTTP ${status}), as intended."
+              else
+                echo "::error::STS returned ${status} for a different reason than the attribute condition:"
+                cat sts.json
+                exit 2
+              fi ;;
+            *)
+              echo "::error::Unexpected STS response ${status}; this is a configuration or transport error, not a verdict on the provider condition:"
+              cat sts.json
+              exit 2 ;;
+          esac

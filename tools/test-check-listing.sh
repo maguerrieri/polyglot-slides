@@ -11,11 +11,16 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # Fresh copy of just what the check reads.
 fresh() {
   rm -rf "$work/repo"
-  mkdir -p "$work/repo/tools" "$work/repo/src"
+  mkdir -p "$work/repo/tools" "$work/repo/src" "$work/repo/terraform"
   cp -R "$repo_root/marketplace" "$repo_root/docs" "$work/repo/"
   cp "$repo_root/tools/check-listing.sh" "$repo_root/tools/png-check.js" "$work/repo/tools/"
   cp "$repo_root/src/appsscript.json" "$work/repo/src/"
   cp "$repo_root/.clasp.json" "$repo_root/wrangler.jsonc" "$work/repo/"
+  cp "$repo_root/terraform/main.tf" "$work/repo/terraform/"
+}
+# Flip the Terraform cutover switch in the fresh copy (RUNBOOK section 1c).
+set_cutover() { # set_cutover true|false
+  (cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";const s=fs.readFileSync(f,"utf8").replace(/(variable\s+"cutover"[\s\S]*?default\s*=\s*)(true|false)/, "$1"+process.argv[1]);fs.writeFileSync(f,s)' "$1")
 }
 # Edit wrangler.jsonc in the fresh copy with a JS expression over the parsed
 # config; the check reads JSONC, so plain JSON output is fine.
@@ -188,17 +193,22 @@ edit_wrangler 'j.assets.html_handling="auto-trailing-slash"'
 expect_fail "html_handling that redirects .html URLs" 'html_handling must be "none"'
 
 fresh
-edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works/*",zone_name:"sprue.works"}]'
-expect_fail "hostname routed but not as a custom domain" 'custom_domain: true'
-
-fresh
-edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works",custom_domain:true},{pattern:"sprue.works",custom_domain:true}]'
-expect_fail "a hostname this repo does not own" "routes an unexpected pattern"
-
-fresh
-# The post-cutover shape: the custom domain declared (RUNBOOK section 1c).
+# A custom_domain here would have Workers Builds replace the live DNS record.
 edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works",custom_domain:true}]'
-expect_pass "custom domain declared after the cutover"
+expect_fail "custom domain declared in wrangler.jsonc" "must not declare routes"
+
+fresh
+edit_wrangler 'j.routes=[]'
+expect_fail "even an empty routes key" "must not declare routes"
+
+fresh
+rm "$work/repo/terraform/main.tf"
+expect_fail "Terraform cutover switch missing" 'must declare variable "cutover"'
+
+fresh
+# The cutover PR's shape: the switch flipped, control files still present.
+set_cutover true
+expect_pass "cutover flipped with Pages control files still present"
 
 fresh
 # CNAME still present but no longer kept out of the Worker's assets.
@@ -220,12 +230,12 @@ expect_fail "stale Pages CNAME" "docs/CNAME must contain polyglot.sprue.works"
 fresh
 # Pre-cutover, CNAME removed: would drop the live GitHub Pages domain.
 rm "$work/repo/docs/CNAME"
-expect_fail "Pages CNAME removed before the custom domain exists" "must stay until wrangler.jsonc routes"
+expect_fail "Pages CNAME removed before the Terraform cutover" "must stay until terraform/main.tf sets cutover = true"
 
 fresh
-# Post-cutover cleanup shape: the route is declared and the Pages control
+# Post-cutover cleanup shape: the switch is true and the Pages control
 # files and their ignore file are all gone (RUNBOOK section 1c, last step).
-edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works",custom_domain:true}]'
+set_cutover true
 rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll" "$work/repo/docs/.assetsignore"
 expect_pass "Pages control files and .assetsignore removed after cutover"
 

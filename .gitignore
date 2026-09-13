@@ -1,2 +1,6 @@
 .DS_Store
 .wrangler/
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.*

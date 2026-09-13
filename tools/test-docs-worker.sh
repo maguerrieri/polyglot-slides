@@ -31,6 +31,13 @@ failures=0
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
 ok() { echo "ok   $*"; }
 
+# The port must be free before we start, or the probes below would be
+# talking to whatever else is listening there rather than to this config.
+if curl -s -o /dev/null "http://127.0.0.1:$port/" 2>/dev/null; then
+  echo "FAIL something is already listening on 127.0.0.1:$port; set DOCS_WORKER_PORT to a free port" >&2
+  exit 1
+fi
+
 # Pin the wrangler major: html_handling semantics are what this test guards.
 npx --yes wrangler@4 dev --local --port "$port" --ip 127.0.0.1 >"$work/wrangler.log" 2>&1 &
 pid=$!

@@ -234,7 +234,7 @@ size, renders, and crops the banner band back out with `sips -c … --cropOffset
 before downsampling. Keep the viewBox aspect equal to the intrinsic aspect,
 and square, whenever qlmanage is the renderer.
 
-## The docs site is a Worker; `html_handling` stays `none`, and the custom domain is the cutover
+## The docs site is a Worker; `html_handling` stays `none`, and Terraform owns the hostname
 
 `docs/` is served by a Cloudflare Worker with static assets (`wrangler.jsonc`,
 deployed by Workers Builds; README "Docs site", RUNBOOK §1). Three things
@@ -250,36 +250,44 @@ about it are not the obvious configuration:
   extensionless paths GitHub Pages used to serve. `tools/test-docs-worker.sh`
   pins all of it in CI and `tools/check-listing.sh` rejects any other
   `html_handling` value. Don't "align it with the website repo".
-- **A non-interactive `wrangler deploy` overrides the DNS record on a declared
-  custom domain without asking.** #47 first documented the opposite —
-  "production builds fail at the domain step until a human cuts over" — from
-  Cloudflare's doc line that a Custom Domain can't be created over an
-  existing CNAME. Reading wrangler 4.131.1's `publishCustomDomains` showed
-  the real behaviour: when stdout is not a TTY it sets
-  `override_existing_origin` and `override_existing_dns_record` to `true`
-  and proceeds; only an interactive run asks *"You already have DNS records
-  that conflict for these Custom Domains … Update them?"*. Workers Builds is
-  non-interactive, so **the `routes` entry for `polyglot.sprue.works` is
-  commented out in `wrangler.jsonc` until the human-run cutover** (RUNBOOK
-  §1c): uncommenting it and merging *is* the DNS switch. `check-listing.sh`
-  allows either no routes or exactly that one custom domain, nothing else.
-  Check the harness's actual code path before writing a runbook step around
-  a prompt.
-- **Copilot's version of that concern was wrong in detail but right in
-  effect** (PR #48): it claimed the override applies only to records owned by
-  another Worker. wrangler has two separate prompts — one for domains used by
-  other Workers (`override_existing_origin`) and one for conflicting DNS
-  records generally (`override_existing_dns_record`). Whether Cloudflare's
-  API honours the latter over a plain CNAME is still unverified on this
-  account, which is why §1c makes a human run it interactively first.
+- **`wrangler.jsonc` declares no routes, and `check-listing.sh` fails if one
+  appears.** The website repo declares its hostnames as `custom_domain`
+  routes; this repo must not, because a non-interactive `wrangler deploy` —
+  what Workers Builds runs on every push to `main` — passes
+  `override_existing_dns_record: true` and replaces whatever DNS record sits
+  on the hostname **without asking**. #47 first documented the opposite
+  ("production builds fail at the domain step until a human cuts over"),
+  from Cloudflare's doc line that a Custom Domain can't be created over an
+  existing CNAME; reading wrangler 4.131.1's `publishCustomDomains` showed
+  the non-TTY branch sets both `override_existing_origin` and
+  `override_existing_dns_record` and proceeds, and only an interactive run
+  asks first. Copilot's review flagged the risk with a wrong reason (it said
+  the override applies only to records owned by another Worker; that is the
+  *other* prompt). Check the harness's actual code path before writing a
+  runbook step around a prompt.
+- **`polyglot.sprue.works` is Terraform's** (`terraform/`, state in the
+  foundation bucket sprue-works/infrastructure provisions as the
+  `polyglot-slides` consumer, applied only from `main` by
+  `.github/workflows/terraform.yml`). The stack imports the existing CNAME
+  and holds one switch, `variable "cutover"`: `false` keeps the DNS-only
+  CNAME to GitHub Pages; `true` makes the record proxied and adds a
+  `cloudflare_workers_route` to the Worker — two in-place changes, no gap,
+  rollback by flipping it back. A Custom Domain was rejected for the reason
+  above and because the provider can't replace a record with a domain
+  atomically. `check-listing.sh` reads that default too: while it is `false`
+  the Pages control files must stay in `docs/`. The record carries
+  `prevent_destroy`; a plan that wants to replace it is wrong, not
+  something to `-target` around.
 
-Until that cutover, `docs/CNAME` and `docs/.nojekyll` stay in the repo:
+Until the cutover, `docs/CNAME` and `docs/.nojekyll` stay in the repo:
 GitHub Pages still serves the live hostname from `main:/docs`, and removing
 `CNAME` from the published branch drops its custom domain immediately.
-`docs/.assetsignore` keeps them out of the Worker. `check-listing.sh`
-enforces the sequencing: while `wrangler.jsonc` declares no route, both
-files must exist and be ignored; once the custom domain is declared, all
-three may go. Removing them is the last step of RUNBOOK §1c. The old Pages DNS
-tooling (`tools/reconcile-pages-dns.sh`, `pages-dns.yml`, the DNS-only
-CNAME rule) was retired in #47; don't recreate it — the Worker's custom
-domain owns the record after the cutover.
+`docs/.assetsignore` keeps them out of the Worker. Removing all three is the
+last step of RUNBOOK §1c. The old Pages DNS tooling
+(`tools/reconcile-pages-dns.sh`, `pages-dns.yml`, the DNS-only CNAME rule)
+was retired in #47 — Terraform owns the record now, so don't recreate it and
+don't edit the record in the dashboard.
+
+The Workers Builds connection itself (repo ↔ Worker, triggers, build token)
+has no Terraform resource in the Cloudflare provider (checked at v5.25.0)
+and is configured in the dashboard or the Builds REST API (RUNBOOK §1a).

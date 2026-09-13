@@ -19,11 +19,11 @@
 #   - the listing URLs point at pages that exist under docs/, and the Store
 #     Listing's required Draft Tester Opt-Out URL is a well-formed https URL
 #   - wrangler.jsonc hosts docs/ with html_handling "none" (anything else
-#     redirects the .html URLs Google holds), routes nothing or exactly the
-#     listing's hostname as a custom domain (adding it is the DNS cutover),
-#     and docs/_redirects restores / -> index.html; the GitHub Pages control
-#     files, while still present, are kept out of the Worker and docs/CNAME
-#     names the same host
+#     redirects the .html URLs Google holds), declares no routes (the
+#     hostname is routed by terraform/, whose `cutover` variable is the DNS
+#     switch), and docs/_redirects restores / -> index.html; the GitHub Pages
+#     control files stay until terraform/ has cut over, are kept out of the
+#     Worker meanwhile, and docs/CNAME names the same host
 #   - the publisher identity is sprue.works: developerName and the public
 #     supportEmail's domain (brand verification checks these against the
 #     verified homepage domain); contactEmail is on the domain too so no
@@ -198,27 +198,29 @@ if (wrangler) {
   const assets = wrangler.assets || {};
   if (assets.directory !== './docs') fail(`wrangler.jsonc assets.directory must be ./docs (got ${assets.directory})`);
   if (assets.html_handling !== 'none') fail(`wrangler.jsonc assets.html_handling must be "none" (got ${assets.html_handling}); any other mode redirects /privacy.html, a URL Google holds`);
-  // Routes: none before the DNS cutover (production is workers.dev only), and
-  // afterwards exactly the listing hostname as a custom domain. Anything else
-  // would move traffic for a hostname this repo does not own -- and a
-  // non-interactive deploy overrides the existing DNS record without asking.
-  const routes = Array.isArray(wrangler.routes) ? wrangler.routes : [];
-  const okRoute = (r) => r && r.pattern === publicHost && r.custom_domain === true;
-  if (routes.length && !routes.some(okRoute)) fail(`wrangler.jsonc routes must be { pattern: "${publicHost}", custom_domain: true } (got ${JSON.stringify(routes)})`);
-  for (const r of routes) if (!okRoute(r)) fail(`wrangler.jsonc routes an unexpected pattern: ${JSON.stringify(r)}`);
+  // Routes: none, ever. The hostname reaches the Worker through the Workers
+  // route terraform/ owns over the DNS record. A route here -- above all a
+  // custom_domain -- would have Workers Builds' non-interactive deploy
+  // replace that DNS record without asking (wrangler passes
+  // override_existing_dns_record=true when stdout is not a TTY).
+  if (wrangler.routes !== undefined && wrangler.routes !== null) fail(`wrangler.jsonc must not declare routes; ${publicHost} is routed by terraform/ (got ${JSON.stringify(wrangler.routes)})`);
   if (wrangler.workers_dev !== true || wrangler.preview_urls !== true) fail('wrangler.jsonc must keep workers_dev and preview_urls on (branch previews)');
   // While either GitHub Pages control file is still in docs/, it must be kept
   // out of the Worker's assets. Once both are gone the ignore file is optional.
   const pagesFiles = ['CNAME', '.nojekyll'].filter((f) => fs.existsSync(path.join('docs', f)));
-  // ...and they may only go once the custom domain is declared: until the
-  // Worker holds the hostname, GitHub Pages still serves it from main:/docs
-  // and dropping CNAME from the published branch drops the live domain.
-  if (!routes.length && pagesFiles.length < 2) fail(`docs/CNAME and docs/.nojekyll must stay until wrangler.jsonc routes ${publicHost} (RUNBOOK 1c); GitHub Pages is still the live site`);
+  // ...and they may only go once terraform/ has cut the hostname over: until
+  // then GitHub Pages still serves it from main:/docs and dropping CNAME from
+  // the published branch drops the live domain.
+  const tfMain = fs.existsSync('terraform/main.tf') ? fs.readFileSync('terraform/main.tf', 'utf8') : '';
+  const cutoverDefault = tfMain.match(/variable\s+"cutover"[\s\S]*?default\s*=\s*(true|false)/);
+  if (!cutoverDefault) fail('terraform/main.tf must declare variable "cutover" with a boolean default (the route-based cutover switch, RUNBOOK 1c)');
+  const cutOver = cutoverDefault && cutoverDefault[1] === 'true';
+  if (!cutOver && pagesFiles.length < 2) fail('docs/CNAME and docs/.nojekyll must stay until terraform/main.tf sets cutover = true (RUNBOOK 1c); GitHub Pages is still the live site');
   if (pagesFiles.length) {
     const ignored = fs.existsSync('docs/.assetsignore') ? fs.readFileSync('docs/.assetsignore', 'utf8').split(/\r?\n/) : [];
     for (const f of pagesFiles) if (!ignored.includes(f)) fail(`docs/.assetsignore must list ${f} while docs/${f} exists (GitHub Pages control file, not a page)`);
   }
-  if (!failures) ok(`wrangler.jsonc serves docs/ with html_handling none${routes.length ? ` on ${publicHost}` : ' (no custom domain yet: pre-cutover)'}`);
+  if (!failures) ok(`wrangler.jsonc serves docs/ with html_handling none; terraform/ ${cutOver ? 'routes' : 'has not yet cut over'} ${publicHost}`);
 }
 if (!fs.existsSync('docs/_redirects') || !/^\/ \/index\.html 200$/m.test(fs.readFileSync('docs/_redirects', 'utf8'))) {
   fail('docs/_redirects must rewrite "/ /index.html 200" (html_handling none does not serve index.html at /)');

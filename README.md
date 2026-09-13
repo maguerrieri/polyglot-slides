@@ -58,14 +58,18 @@ the sidebar, persisted via `UserProperties`; the offered list is
 - `tools/release.sh` — cut a numbered script version for a tagged release (CI and local)
 - `tools/check-listing.sh`, `tools/render-icons.sh` — Marketplace listing consistency check and icon rendering; both use `tools/png-check.js` to verify the icon artwork fills its canvas
 - `wrangler.jsonc` — the Cloudflare Worker that serves `docs/` (see [Docs site](#docs-site)); `tools/test-docs-worker.sh` pins what it serves
+- `terraform/` — the `polyglot.sprue.works` DNS record and Workers route (see [Terraform](#terraform)); applied from `main` by `.github/workflows/terraform.yml`
 - `marketplace/` — Marketplace listing config, assets, and the publishing runbook
 - `docs/` — the docs site: homepage, privacy policy, terms (brand verification); styled by the sprue.works brand theme via `docs/site.css`, checked by `tools/test-docs-theme.sh`
 - `tools/lint.sh`, `tools/lint-workflows.sh`, `tools/test-*.sh` — what the CI
   workflow runs
 - `.github/workflows/` — `ci.yml` (lint on PRs), `deploy.yml` (push on
   `main`; on `v*` tags cut a version and open the "bump script version"
-  tracking issue). The docs site deploys from Cloudflare Workers Builds,
-  not from Actions ([Docs site](#docs-site))
+  tracking issue), `terraform.yml` (validate on PRs; plan and apply
+  `terraform/` on `main`), and `oidc-isolation-check.yml` (manual: proves a
+  non-`main` ref cannot reach the state bucket). The docs site itself
+  deploys from Cloudflare Workers Builds, not from Actions
+  ([Docs site](#docs-site))
 - `INSTALL.md` — end-user install runbook (and the owner-side sharing setup)
 
 ## Develop
@@ -161,15 +165,60 @@ files are what is served.
   `index.html` with a 200. `tools/test-docs-worker.sh` (CI) serves `docs/`
   with `wrangler dev` and fails if any of the three URLs redirects or differs
   from the file; `tools/test-docs-theme.sh` pins the legal pages' wording.
-- **Custom domain and DNS:** `polyglot.sprue.works` becomes a `custom_domain`
-  route in `wrangler.jsonc`, and the Worker then owns its DNS record. Adding
-  that route is the one-time cutover from GitHub Pages — a production deploy
-  replaces the existing record without asking — so it is done in its own PR
-  by a human following `marketplace/RUNBOOK.md` §1c, after the Worker has
-  been verified on its `workers.dev` hostnames. Until then the route is
-  commented out and the live hostname still points at GitHub Pages.
+- **Hostname and DNS:** `polyglot.sprue.works` is *not* in `wrangler.jsonc`
+  (`tools/check-listing.sh` rejects any route there). Its DNS record and the
+  Workers route that sends it to this Worker live in [`terraform/`](#terraform),
+  where one variable, `cutover`, switches the hostname between GitHub Pages
+  and the Worker in a reviewed plan. Declaring it as a `custom_domain` would
+  let a production deploy replace the DNS record without asking. The
+  one-time cutover is `marketplace/RUNBOOK.md` §1c; until it runs, the live
+  hostname still points at GitHub Pages.
 
 Run it locally the way production does with `npx wrangler dev`.
+
+## Terraform
+
+`terraform/` holds the Cloudflare configuration for `polyglot.sprue.works`
+that must not live in `wrangler.jsonc`: the hostname's DNS record (imported
+from the retired shell reconciler) and, once `variable "cutover"` is `true`,
+the Workers route to the docs Worker. Nothing in it is applied by hand. It
+mirrors sprue-works/website's `terraform/`:
+
+- **State** lives in the GCS bucket `sprue-works-polyglot-slides-tfstate`
+  under the prefix `terraform/polyglot-slides/dns`, provisioned by
+  sprue-works/infrastructure as this repo's consumer entry (its issue #1).
+  `terraform/backend.tf` declares an empty `gcs` backend; the bucket and
+  prefix are passed at `init` from the repository variables
+  `TF_STATE_BUCKET` and `TF_STATE_PREFIX`.
+- **Identity.** The workflow authenticates to Google with GitHub OIDC
+  through the workload identity provider named in the repository variable
+  `GCP_WORKLOAD_IDENTITY_PROVIDER`. The provider trusts exactly this
+  repository's `refs/heads/main` ref subject, so only the apply job on a push
+  to `main` (or a `workflow_dispatch` on `main`) can reach the bucket; the
+  job must not name a GitHub Environment, which would change the subject.
+  Dispatch `oidc-isolation-check.yml` from a non-`main` branch to confirm
+  the rejection.
+- **Workflow.** `.github/workflows/terraform.yml` runs on changes under
+  `terraform/`. Pull requests get `fmt -check`, `init -backend=false`, and
+  `validate` only; a push to `main` that touches those paths, or a manual
+  dispatch on `main`, additionally plans and applies. The apply job is the
+  only place the Cloudflare token appears; it needs `Zone:Read`,
+  `DNS:Edit`, and `Workers Routes:Edit` on the `sprue.works` zone.
+- **Import.** The CNAME was created through the Cloudflare API before this
+  Terraform existed. An `import` block adopts it on the first apply from
+  `main`; that plan must read `1 to import, 0 to add, 0 to change, 0 to
+  destroy`. An in-place change there means live and HCL have drifted: stop
+  and reconcile. The record carries `prevent_destroy`.
+- **Cutover.** `variable "cutover"` defaults to `false` (DNS-only CNAME to
+  GitHub Pages, no route). A PR flipping it to `true` makes the record
+  proxied and adds the route: two in-place changes, no gap, and flipping it
+  back is the rollback. `tools/check-listing.sh` reads the same default and
+  keeps the Pages control files in `docs/` while it is `false`. The
+  procedure is `marketplace/RUNBOOK.md` §1c.
+- **Local loop.** `terraform -chdir=terraform fmt -recursive`, then
+  `terraform -chdir=terraform init -backend=false && terraform -chdir=terraform
+  validate`. Plans need the bucket, so they only run from `main` via the
+  workflow.
 
 ## Release pipeline
 
