@@ -1,0 +1,36 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "polyglot-slides",
+  "compatibility_date": "2026-09-12",
+
+  // Assets-only Worker: no script, everything under docs/ is served as-is
+  // (minus docs/.assetsignore). Mirrors sprue-works/website's wrangler.jsonc.
+  //
+  // html_handling is "none", not the "auto-trailing-slash" default the main
+  // site uses: the default answers /privacy.html with a 307 to /privacy, and
+  // /privacy.html and /terms.html are the exact URLs pasted into the OAuth
+  // consent screen and the Marketplace listing (marketplace/RUNBOOK.md). With
+  // "none" the site root would 404, so docs/_redirects rewrites / (and the
+  // extensionless paths GitHub Pages used to serve) with a 200 — no redirect
+  // is ever emitted. tools/test-docs-worker.sh pins all of this.
+  "assets": {
+    "directory": "./docs",
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+
+  // No "routes" here, ever. polyglot.sprue.works reaches this Worker through
+  // a Workers route that terraform/ owns, over the hostname's DNS record
+  // (marketplace/RUNBOOK.md §1c). A `custom_domain` route in this file would
+  // have Workers Builds' non-interactive `wrangler deploy` replace that DNS
+  // record without asking (wrangler 4.131.1 passes
+  // override_existing_dns_record=true when stdout is not a TTY), so
+  // tools/check-listing.sh fails on any route declared here. Production is
+  // reachable directly at polyglot-slides.igneus-fdc.workers.dev as well.
+
+  // Branch previews: Workers Builds uploads a version per non-production
+  // branch and aliases it by branch name at
+  // <alias>-polyglot-slides.igneus-fdc.workers.dev (README "Docs site").
+  "workers_dev": true,
+  "preview_urls": true
+}

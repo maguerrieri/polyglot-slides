@@ -18,7 +18,9 @@
 - `marketplace/` — the Workspace Marketplace listing as data: `listing.json`
   (what a human pastes into the Marketplace SDK / consent screen), the icon
   and screenshots, and `RUNBOOK.md` (the click-through). `docs/` is the
-  GitHub Pages site (homepage + privacy + terms) brand verification needs;
+  docs site (homepage + privacy + terms) brand verification needs, served
+  by the Cloudflare Worker in `wrangler.jsonc` (see "The docs site is a
+  Worker" below);
   its look comes from the sprue.works brand theme (see "The docs site is
   styled by the brand theme" below), enforced by `tools/test-docs-theme.sh`.
   `tools/check-listing.sh` is the contract: listing scopes == manifest scopes,
@@ -267,34 +269,64 @@ size, renders, and crops the banner band back out with `sips -c … --cropOffset
 before downsampling. Keep the viewBox aspect equal to the intrinsic aspect,
 and square, whenever qlmanage is the renderer.
 
-## The Pages hostname is one DNS-only CNAME
+## The docs site is a Worker; `html_handling` stays `none`, and Terraform owns the hostname
 
-`polyglot.sprue.works` must be exactly one Cloudflare CNAME to
-`sprue-works.github.io` with `proxied=false`. Cloudflare proxying hides the
-Pages target and can block GitHub's domain verification and managed-certificate
-provisioning. `tools/reconcile-pages-dns.sh` is intentionally conservative:
-it creates a missing record and repairs one existing CNAME, but refuses to
-delete or overwrite conflicting A/AAAA/multiple records. Resolve those by hand
-after identifying their owner.
+`docs/` is served by a Cloudflare Worker with static assets (`wrangler.jsonc`,
+deployed by Workers Builds; README "Docs site", RUNBOOK §1). Three things
+about it are not the obvious configuration:
 
-Keep `CLOUDFLARE_API_TOKEN` in GitHub Secrets and `CLOUDFLARE_ZONE_ID` in
-Actions Variables. The token needs only Zone:DNS:Edit and Zone:Read for
-`sprue.works`; never use or document the Global API Key.
+- **`html_handling: "none"`, not the `auto-trailing-slash` default the main
+  sprue.works site uses.** The default answers `/privacy.html` with a
+  `307` to `/privacy` — verified with `wrangler dev` (#47) — and
+  `/privacy.html` / `/terms.html` are the exact URLs Google holds for OAuth
+  verification, where a redirect or 404 restarts the round. `none` serves the
+  `.html` paths as-is but then returns 404 for `/`, so `docs/_redirects`
+  carries `/ /index.html 200` (a rewrite, not a redirect) plus the
+  extensionless paths GitHub Pages used to serve. `tools/test-docs-worker.sh`
+  pins all of it in CI and `tools/check-listing.sh` rejects any other
+  `html_handling` value. Don't "align it with the website repo".
+- **`wrangler.jsonc` declares no routes, and `check-listing.sh` fails if one
+  appears.** The website repo declares its hostnames as `custom_domain`
+  routes; this repo must not, because a non-interactive `wrangler deploy` —
+  what Workers Builds runs on every push to `main` — passes
+  `override_existing_dns_record: true` and replaces whatever DNS record sits
+  on the hostname **without asking**. #47 first documented the opposite
+  ("production builds fail at the domain step until a human cuts over"),
+  from Cloudflare's doc line that a Custom Domain can't be created over an
+  existing CNAME; reading wrangler 4.131.1's `publishCustomDomains` showed
+  the non-TTY branch sets both `override_existing_origin` and
+  `override_existing_dns_record` and proceeds, and only an interactive run
+  asks first. Copilot's review flagged the risk with a wrong reason (it said
+  the override applies only to records owned by another Worker; that is the
+  *other* prompt). Check the harness's actual code path before writing a
+  runbook step around a prompt.
+- **`polyglot.sprue.works` is Terraform's** (`terraform/`, state in the
+  foundation bucket sprue-works/infrastructure provisions as the
+  `polyglot-slides` consumer, applied only from `main` by
+  `.github/workflows/terraform.yml`). The stack imports the existing CNAME
+  and holds one switch, `variable "cutover"`: `false` keeps the DNS-only
+  CNAME to GitHub Pages; `true` makes the record proxied and adds a
+  `cloudflare_workers_route` to the Worker — two in-place changes, no gap,
+  rollback by flipping it back. A Custom Domain was rejected for the reason
+  above and because the provider can't replace a record with a domain
+  atomically. `check-listing.sh` reads that default too: while it is `false`
+  the Pages control files must stay in `docs/`. The record carries
+  `prevent_destroy`; a plan that wants to replace it is wrong, not
+  something to `-target` around.
 
-With legacy branch-based Pages, `PUT /repos/{owner}/{repo}/pages` with a new
-`cname` writes `docs/CNAME` directly to the configured publishing branch as an
-automatic `Create CNAME` commit when that file is absent. Prefer merging the
-intended `docs/CNAME` first. If Pages bootstrap must happen before the PR
-merges, fetch and rebase onto the automatic commit before pushing the PR branch.
+Until the cutover, `docs/CNAME` and `docs/.nojekyll` stay in the repo:
+GitHub Pages still serves the live hostname from `main:/docs`, and removing
+`CNAME` from the published branch drops its custom domain immediately.
+`docs/.assetsignore` keeps them out of the Worker. Removing all three is the
+last step of RUNBOOK §1c, and `check-listing.sh` allows it only when
+`cutover` is `true` *and* `terraform/CUTOVER.md` names the apply run that
+added the route — an explicit attestation, so the switch and the deletion
+cannot ride one commit (the apply and the Pages build are separate
+operations, and the route must be verified live in between). The old Pages DNS tooling
+(`tools/reconcile-pages-dns.sh`, `pages-dns.yml`, the DNS-only CNAME rule)
+was retired in #47 — Terraform owns the record now, so don't recreate it and
+don't edit the record in the dashboard.
 
-GitHub only requests the managed certificate when the custom domain is *saved
-while DNS already resolves*. If the domain was configured before the CNAME
-existed (the normal order for this repo: Pages first, `pages-dns.yml` after
-merge), `https_certificate` stayed `null` for 30+ minutes with no sign of progress,
-and re-sending the same `cname` does nothing. Clear it and re-add it, all
-against `PUT /repos/{owner}/{repo}/pages`:
-
-1. `{"cname": null}`
-2. `{"cname": "polyglot.sprue.works"}` — the cert reached `approved` within
-   a minute.
-3. `{"https_enforced": true}`
+The Workers Builds connection itself (repo ↔ Worker, triggers, build token)
+has no Terraform resource in the Cloudflare provider (checked at v5.25.0)
+and is configured in the dashboard or the Builds REST API (RUNBOOK §1a).

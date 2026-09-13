@@ -11,11 +11,36 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # Fresh copy of just what the check reads.
 fresh() {
   rm -rf "$work/repo"
-  mkdir -p "$work/repo/tools" "$work/repo/src"
+  mkdir -p "$work/repo/tools" "$work/repo/src" "$work/repo/terraform"
   cp -R "$repo_root/marketplace" "$repo_root/docs" "$work/repo/"
   cp "$repo_root/tools/check-listing.sh" "$repo_root/tools/png-check.js" "$work/repo/tools/"
   cp "$repo_root/src/appsscript.json" "$work/repo/src/"
-  cp "$repo_root/.clasp.json" "$work/repo/"
+  cp "$repo_root/.clasp.json" "$repo_root/wrangler.jsonc" "$work/repo/"
+  cp "$repo_root/terraform/main.tf" "$work/repo/terraform/"
+  [[ -f "$repo_root/terraform/CUTOVER.md" ]] && cp "$repo_root/terraform/CUTOVER.md" "$work/repo/terraform/"
+  return 0
+}
+# Flip the Terraform cutover switch in the fresh copy (RUNBOOK section 1c).
+set_cutover() { # set_cutover true|false
+  (cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";const s=fs.readFileSync(f,"utf8").replace(/(variable\s+"cutover"[\s\S]*?default\s*=\s*)(true|false)/, "$1"+process.argv[1]);fs.writeFileSync(f,s)' "$1")
+}
+# A fresh copy forced into the pre-cutover shape, whatever state the real
+# repo is in (the cutover and cleanup PRs change it): switch false, no
+# attestation, GitHub Pages control files present and ignored. The hosting
+# cases below start from here so they keep testing the same transitions
+# after those PRs land.
+fresh_pre() {
+  fresh
+  set_cutover false
+  rm -f "$work/repo/terraform/CUTOVER.md"
+  printf 'polyglot.sprue.works\n' >"$work/repo/docs/CNAME"
+  : >"$work/repo/docs/.nojekyll"
+  printf 'CNAME\n.nojekyll\n' >"$work/repo/docs/.assetsignore"
+}
+# Edit wrangler.jsonc in the fresh copy with a JS expression over the parsed
+# config; the check reads JSONC, so plain JSON output is fine.
+edit_wrangler() { # edit_wrangler <js mutating `j`>
+  (cd "$work/repo" && node -e 'const fs=require("fs"),f="wrangler.jsonc";const s=fs.readFileSync(f,"utf8").replace(/\/\*[\s\S]*?\*\//g,"").replace(/^\s*\/\/.*$/gm,"").replace(/,(\s*[}\]])/g,"$1");const j=JSON.parse(s);'"$1"';fs.writeFileSync(f,JSON.stringify(j))')
 }
 
 expect_pass() { # expect_pass <label>
@@ -172,5 +197,110 @@ expect_fail "plain-http draft tester opt-out URL" "draftTesterOptOut must be a w
 fresh
 (cd "$work/repo" && node -e 'const fs=require("fs"),f="marketplace/listing.json",j=JSON.parse(fs.readFileSync(f));j.urls.draftTesterOptOut="file an issue";fs.writeFileSync(f,JSON.stringify(j))')
 expect_fail "non-URL draft tester opt-out" "draftTesterOptOut must be a well-formed https URL"
+
+# Hosting invariants (#47): docs/ is served by a Cloudflare Worker.
+fresh_pre
+rm "$work/repo/wrangler.jsonc"
+expect_fail "wrangler config missing reports cleanly" "wrangler.jsonc is missing or not valid JSONC"
+
+fresh_pre
+edit_wrangler 'j.assets.html_handling="auto-trailing-slash"'
+expect_fail "html_handling that redirects .html URLs" 'html_handling must be "none"'
+
+fresh_pre
+# A custom_domain here would have Workers Builds replace the live DNS record.
+edit_wrangler 'j.routes=[{pattern:"polyglot.sprue.works",custom_domain:true}]'
+expect_fail "custom domain declared in wrangler.jsonc" "must not declare routes"
+
+fresh_pre
+edit_wrangler 'j.routes=[]'
+expect_fail "even an empty routes key" "must not declare routes"
+
+fresh_pre
+rm "$work/repo/terraform/main.tf"
+expect_fail "Terraform cutover switch missing" 'must declare variable "cutover"'
+
+fresh_pre
+# The cutover PR's shape: the switch flipped, control files still present.
+set_cutover true
+expect_pass "cutover flipped with Pages control files still present"
+
+fresh_pre
+# Switch flipped but the route resource removed: a proxied hostname with no
+# Worker in front. The switch alone must not count as routing.
+set_cutover true
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/resource\s+"cloudflare_workers_route"[\s\S]*?\n\}\n/,""))')
+expect_fail "cutover without the Workers route resource" "must declare a cloudflare_workers_route"
+
+fresh_pre
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/script\s*=\s*var\.worker_name/,"script  = \"some-other-worker\""))')
+expect_fail "route pointed at a different Worker" "script must be var.worker_name"
+
+fresh_pre
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/default\s*=\s*"polyglot-slides"/,"default     = \"website\""))')
+expect_fail "worker_name default drifted from wrangler.jsonc" 'variable "worker_name" must default to'
+
+fresh_pre
+# The record repointed at another host: the route would ride a record that
+# no longer belongs to this hostname's GitHub Pages origin.
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/name\s*=\s*var\.hostname/,"name    = \"other.sprue.works\""))')
+expect_fail "DNS record renamed away from the hostname" "record name must be var.hostname"
+
+fresh_pre
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/content\s*=\s*"sprue-works\.github\.io"/,"content = \"example.com\""))')
+expect_fail "DNS record retargeted" "must keep pointing at sprue-works.github.io"
+
+fresh_pre
+# Route moved to another zone (first zone_id in the file after the variable
+# block is the record's; the route's is the last one).
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";let s=fs.readFileSync(f,"utf8");const i=s.lastIndexOf("zone_id = var.zone_id");s=s.slice(0,i)+"zone_id = \"deadbeef\""+s.slice(i+"zone_id = var.zone_id".length);fs.writeFileSync(f,s)')
+expect_fail "route in another zone" "route zone_id must be var.zone_id"
+
+fresh_pre
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/default\s*=\s*"0a2832ed293070b06bd75cb7fc8db4d7"/,"default     = \"00000000000000000000000000000000\""))')
+expect_fail "zone_id default drifted" 'variable "zone_id" must default to the sprue.works zone'
+
+fresh_pre
+# CNAME still present but no longer kept out of the Worker's assets.
+rm "$work/repo/docs/.assetsignore"
+expect_fail "Pages control file would be served by the Worker" "docs/.assetsignore must list CNAME"
+
+fresh_pre
+edit_wrangler 'j.preview_urls=false'
+expect_fail "branch previews switched off" "preview_urls"
+
+fresh_pre
+rm "$work/repo/docs/_redirects"
+expect_fail "root rewrite missing" "docs/_redirects must rewrite"
+
+fresh_pre
+printf 'polyglot-slides.pages.dev\n' >"$work/repo/docs/CNAME"
+expect_fail "stale Pages CNAME" "docs/CNAME must contain polyglot.sprue.works"
+
+fresh_pre
+# Pre-cutover, CNAME removed: would drop the live GitHub Pages domain.
+rm "$work/repo/docs/CNAME"
+expect_fail "Pages CNAME removed before the Terraform cutover" "must stay until terraform/main.tf sets cutover = true"
+
+fresh_pre
+# Switch flipped and control files deleted in the same commit, with no
+# attestation that the route was applied and verified: refused.
+set_cutover true
+rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll" "$work/repo/docs/.assetsignore"
+expect_fail "control files removed in the cutover commit itself" "may only go once terraform/CUTOVER.md attests"
+
+fresh_pre
+set_cutover true
+printf 'Cut over on 2026-09-20.\n' >"$work/repo/terraform/CUTOVER.md"
+expect_fail "attestation without the apply run URL" "must name the Terraform apply run"
+
+fresh_pre
+# Post-cutover cleanup shape: the switch is true, terraform/CUTOVER.md names
+# the apply run, and the Pages control files and their ignore file are gone
+# (RUNBOOK section 1c, last step).
+set_cutover true
+printf 'Route applied by https://github.com/sprue-works/polyglot-slides/actions/runs/1234567890 and verified live.\n' >"$work/repo/terraform/CUTOVER.md"
+rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll" "$work/repo/docs/.assetsignore"
+expect_pass "Pages control files and .assetsignore removed after cutover"
 
 echo "all check-listing.sh tests passed"

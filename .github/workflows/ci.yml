@@ -32,5 +32,5 @@ jobs:
         run: tools/test-check-listing.sh
       - name: Docs site theme + legal-text pin
         run: tools/test-docs-theme.sh
-      - name: Pages DNS reconciler self-test
-        run: tools/test-reconcile-pages-dns.sh
+      - name: Docs site served by the Worker (wrangler dev)
+        run: tools/test-docs-worker.sh

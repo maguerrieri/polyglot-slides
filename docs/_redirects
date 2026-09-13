@@ -1,0 +1,11 @@
+# Rewrites (status 200, no redirect) for the Cloudflare Worker that serves
+# this directory. wrangler.jsonc sets html_handling to "none" so that
+# /privacy.html and /terms.html — the URLs Google holds for OAuth
+# verification — are served at exactly those paths; the price is that "none"
+# also stops / from serving index.html, which the first line restores. The
+# other two keep the extensionless paths GitHub Pages used to serve.
+# tools/test-docs-worker.sh pins the behaviour; Cloudflare never serves this
+# file itself.
+/ /index.html 200
+/privacy /privacy.html 200
+/terms /terms.html 200

@@ -13,7 +13,7 @@ Paste sources, so nothing is retyped:
 |---|---|
 | App name, short description, category, developer name, support + contact emails | `marketplace/listing.json` → `app` |
 | Detailed description | `marketplace/description.md` |
-| Homepage / privacy policy / terms URLs | `listing.json` → `urls` (served from `docs/` by GitHub Pages) |
+| Homepage / privacy policy / terms URLs | `listing.json` → `urls` (served from `docs/` by the Cloudflare Worker in `wrangler.jsonc`) |
 | OAuth scopes | `listing.json` → `oauth.scopes` (== `src/appsscript.json`) |
 | App icon 128×128 / 32×32, consent-screen logo 120×120 | `marketplace/assets/icon-*.png` |
 | Screenshots 1280×800 | `marketplace/assets/` + `marketplace/screenshots.json` (step 7) |
@@ -40,91 +40,177 @@ the same school Workspace domain?* Yes → `private` (set
 `distribution.privateDomain` to the domain). Mixed / personal Gmail → `unlisted`.
 The steps below are written for `unlisted` and mark what `private` skips.
 
-## 1. Publish the static pages (GitHub Pages)
+## 1. Publish the static pages (Cloudflare Worker)
 
 The homepage, privacy policy, and terms of service in `docs/` are required
-fields on the consent screen and the listing. `docs/CNAME` pins the custom
-domain in the published branch so later Pages builds cannot silently clear it.
+fields on the consent screen and the listing. They are served by a
+**Cloudflare Worker with static assets** (assets only, no script) configured
+in `wrangler.jsonc` and deployed by **Workers Builds** from this repo, the
+same arrangement as sprue-works/website. Production is `main`; every other
+branch gets a preview URL (README "Docs site"). The hostname
+`polyglot.sprue.works` is **not** declared in `wrangler.jsonc`: its DNS record
+and the Workers route that sends it to the Worker are owned by `terraform/`
+(README "Terraform"), and one variable there, `cutover`, is the switch
+between GitHub Pages and the Worker.
 
-### 1a. Enable Pages and record the custom domain
+CI pins what Google depends on: `tools/test-docs-worker.sh` serves `docs/`
+with `wrangler dev` and checks that `/`, `/privacy.html`, and `/terms.html`
+answer 200 with no redirect and byte-identical bodies; `tools/check-listing.sh`
+keeps `html_handling` at `none`, refuses any route in `wrangler.jsonc`, and
+keeps the GitHub Pages control files in place until `cutover` is `true`.
 
-One-time, from a repo admin:
+Why the hostname is Terraform's and not wrangler's: a non-interactive
+`wrangler deploy` (what Workers Builds runs on every push to `main`) attaches
+a `custom_domain` by sending `override_existing_dns_record: true`, replacing
+whatever record sits on the hostname **without asking** (wrangler 4.131.1,
+`publishCustomDomains`). With such a route in the config, merging any PR would
+be the cutover. The Terraform provider cannot express that replacement
+atomically either. A Workers *route* over a *proxied* record can be reached
+with two in-place changes and no gap, so that is the shape, and the switch is
+a reviewed plan rather than a deploy side effect.
 
-```bash
-gh api -X POST repos/sprue-works/polyglot-slides/pages \
-  -f build_type=legacy -f 'source[branch]=main' -f 'source[path]=/docs'
+Until 1c has run with `cutover = true`, the *live* site is still the legacy
+GitHub Pages build of `main:/docs` behind the DNS-only CNAME to
+`sprue-works.github.io` — the very record `terraform/main.tf` imports.
 
-gh api -X PUT repos/sprue-works/polyglot-slides/pages \
-  -f cname=polyglot.sprue.works
-```
+### 1a. Connect the repo to Workers Builds (one-time)
 
-If Pages is already enabled, the first command returns an "already exists"
-error; confirm *Settings → Pages → Deploy from a branch → `main` / `/docs`*
-instead of recreating it. On legacy branch-based Pages, the custom-domain API
-creates `docs/CNAME` directly on `main` as an automatic `Create CNAME` commit if
-the file is absent. Merge the intended `docs/CNAME` first when possible; if the
-API runs first, fetch that commit and rebase any open setup PR onto it.
+From an account with access to the Igneus Cloudflare account (the one that
+owns the `sprue.works` zone and the `website` Worker):
 
-### 1b. Bootstrap and reconcile Cloudflare DNS
+1. Cloudflare dashboard → Workers & Pages → Create → **Continue with GitHub**
+   → the Cloudflare GitHub App is already authorised for the `sprue-works`
+   org from the website; select `sprue-works/polyglot-slides`. (A repository
+   connection for this repo may already exist from #47's exploration; the
+   dashboard reuses it.)
+2. Worker name **`polyglot-slides`** (must match `name` in `wrangler.jsonc`),
+   production branch `main`, no build command, deploy command left at the
+   default. Create and deploy. With no route declared this publishes only
+   `https://polyglot-slides.igneus-fdc.workers.dev`.
+3. In the Worker: Settings → Build → enable **non-production branch builds**
+   and **pull request comments**. Settings → Domains & Routes should show the
+   `workers.dev` route and preview URLs enabled, from `wrangler.jsonc`, and no
+   custom domain.
 
-GitHub Pages needs exactly one DNS-only CNAME from `polyglot.sprue.works` to
-`sprue-works.github.io`. The manually dispatched `Pages DNS` workflow calls
-`tools/reconcile-pages-dns.sh`: `check` is read-only; `apply` creates a missing
-record or corrects a single drifted CNAME. It deliberately stops on A/AAAA,
-non-CNAME, or multiple records rather than deleting unrelated DNS.
+Branch builds run `wrangler versions upload`, which never touches routes or
+domains, so previews are safe at every stage.
 
-The token currently used by `maguerrieri/toolbox` cannot be read back or copied
-between repositories by GitHub or automation. A human must either enter the
-original token or rotate it:
+### 1b. Wire and verify Terraform, then verify the Worker
 
-1. In Cloudflare, create an API token restricted to the `sprue.works` zone with
-   **Zone → DNS → Edit** and **Zone → Zone → Read** only. Do not use the Global
-   API Key.
-2. Copy the zone ID from the `sprue.works` zone overview into the non-secret
-   repository variable **`CLOUDFLARE_ZONE_ID`**.
-3. Store the token as the repository secret **`CLOUDFLARE_API_TOKEN`**. Enter it
-   directly in GitHub; never paste it into an issue, log, command argument, or
-   committed file.
-4. In *Settings → Environments*, confirm the **`pages-dns`** environment allows
-   deployments only from the selected branch `main`. The workflow also checks
-   out `main` explicitly, so a manual dispatch from another ref cannot substitute
-   code that receives the token.
-5. Run *Actions → Pages DNS → Run workflow → apply* against `main`, then run it
-   again in `check` mode to prove the result is idempotent.
+Terraform prerequisites (one-time, repo settings):
 
-CLI equivalents when the values are already held securely in the shell are:
+1. Actions **variables** (non-secret; the same shape as sprue-works/website):
+   `TF_STATE_BUCKET` = `sprue-works-polyglot-slides-tfstate`,
+   `TF_STATE_PREFIX` = `terraform/polyglot-slides/dns`,
+   `GCP_WORKLOAD_IDENTITY_PROVIDER` = the provider name from
+   sprue-works/infrastructure's `workload_identity_provider_name` output
+   (`projects/1081723767108/locations/global/workloadIdentityPools/github-actions/providers/github-oidc`
+   at the time of writing). The bucket and trust are the `polyglot-slides`
+   entry of that repo's `consumers` map (infrastructure#1).
+2. The `CLOUDFLARE_API_TOKEN` secret must carry, on the `sprue.works` zone,
+   **Zone:Read**, **DNS:Edit**, and **Workers Routes:Edit**. The token minted
+   for the retired reconciler had only the first two; edit it in Cloudflare
+   (or mint a replacement and `gh secret set` it from stdin). Never paste the
+   value anywhere else.
+3. Optionally dispatch *Actions → OIDC isolation check* from a branch other
+   than `main`; it passes only when Google rejects that branch's token.
 
-```bash
-gh variable set CLOUDFLARE_ZONE_ID -R sprue-works/polyglot-slides
-gh secret set CLOUDFLARE_API_TOKEN -R sprue-works/polyglot-slides
-gh workflow run pages-dns.yml -R sprue-works/polyglot-slides --ref main -f mode=apply
-```
+Then the first apply, which must be a pure import:
 
-Both `gh ... set` commands read the value from standard input; do not put the
-value on the command line.
+4. Merging the PR that adds `terraform/` runs *Terraform → Plan and apply* on
+   `main`. Its plan must read **`1 to import, 0 to add, 0 to change, 0 to
+   destroy`**: the existing CNAME is adopted, nothing else. An in-place change
+   there means the live record and the HCL have drifted; the workflow's
+   guard step fails the run before applying in that case, so reconcile
+   (fix the HCL to match, or fix the record by hand and note why) and re-run
+   with `gh run rerun <run-id>`. The same re-run is how to retry once the
+   variables in step 1 exist; the apply path is push-to-`main` only, with no
+   manual dispatch, because the protected branch is its only authorization
+   boundary. From here the record is Terraform's; do not edit it in the
+   dashboard.
 
-### 1c. Verify the organization domain and HTTPS
+Then the Worker, before touching the hostname:
 
-To prevent another repository from claiming the hostname, an organization
-owner must open *Sprue Works organization Settings → Pages → Verified domains*,
-add `sprue.works`, and copy GitHub's generated TXT name and token into a
-DNS-only Cloudflare TXT record. The name/token are generated per organization
-and cannot be invented in this repository. Return to GitHub and click
-**Verify** after the TXT record resolves.
+5. Open a PR's preview URL (the Workers Builds comment, or
+   `https://<branch-alias>-polyglot-slides.igneus-fdc.workers.dev/`) and the
+   production copy at `https://polyglot-slides.igneus-fdc.workers.dev/`.
+6. From a checkout of `main`, compare bytes and status codes for the URLs
+   Google holds:
 
-After the Pages certificate reaches `approved`, enable HTTPS in *Settings →
-Pages* or with:
+   ```bash
+   host=polyglot-slides.igneus-fdc.workers.dev
+   for p in / /privacy.html /terms.html; do
+     curl -s -o /dev/null -w "$p %{http_code} %{redirect_url}\n" "https://$host$p"
+   done
+   curl -s "https://$host/" | cmp - docs/index.html
+   curl -s "https://$host/privacy.html" | cmp - docs/privacy.html
+   curl -s "https://$host/terms.html" | cmp - docs/terms.html
+   ```
 
-```bash
-gh api -X PUT repos/sprue-works/polyglot-slides/pages -F https_enforced=true
-```
+   Every line must be `200` with an empty redirect URL and every `cmp`
+   silent. A `307` here means `html_handling` drifted from `none`.
 
-Certificate provisioning can take time after DNS is correct. Confirm all three
-pages resolve with a valid certificate:
+### 1c. Cut over from GitHub Pages (production-affecting; a reviewed PR does this)
 
-- https://polyglot.sprue.works/
-- https://polyglot.sprue.works/privacy.html
-- https://polyglot.sprue.works/terms.html
+Google's reviewers fetch `https://polyglot.sprue.works/privacy.html` and
+`/terms.html` by exactly those URLs while verification is in progress, so
+the switch has to leave the hostname resolving at every moment. The cutover
+is two in-place changes Terraform makes in order, both reversible:
+
+- the CNAME becomes **proxied** (Cloudflare fronts GitHub Pages; the zone's
+  SSL mode is *Full*, and Pages already holds a certificate for the
+  hostname, so nothing downgrades);
+- a **Workers route** `polyglot.sprue.works/*` → `polyglot-slides` is added,
+  which takes precedence over the origin. From that apply on, the Worker
+  serves the hostname.
+
+1. Open the cutover PR: in `terraform/main.tf`, change the default of
+   `variable "cutover"` from `false` to `true`, and nothing else. CI validates
+   the HCL; `check-listing.sh` reads the same default and from now on allows
+   the Pages control files to go (step 4).
+2. Review the merge's *Plan and apply* run before it applies? It cannot be
+   paused — the apply job runs the plan it just made — so review the **PR**
+   with the expected plan in mind: `0 to add` on the record (one in-place
+   update, `proxied: false → true`), `1 to add` for the route, nothing
+   destroyed. `prevent_destroy` on the record makes a replacement fail the
+   plan rather than run.
+3. Verify the live hostname the same way as 1b step 6, with
+   `host=polyglot.sprue.works`, plus one request through a resolver that has
+   not cached the old answer (`curl --resolve` against a Cloudflare edge IP,
+   or a phone off wifi). The record's TTL is automatic, so the switch is
+   visible within seconds. **Rollback** is a PR setting `cutover` back to
+   `false`: the route is removed and the record returns to DNS-only, and
+   GitHub Pages — still enabled and still holding the domain at this point —
+   resumes serving.
+4. Switch GitHub Pages off so it cannot be re-pointed at the hostname:
+
+   ```bash
+   gh api -X DELETE repos/sprue-works/polyglot-slides/pages
+   ```
+
+   Organization Settings → Pages → Verified domains may keep `sprue.works`;
+   it is harmless and blocks another repo from claiming the hostname on
+   GitHub's side. After this step the rollback above no longer has a
+   Pages site to fall back to; re-enabling Pages (1a of the old runbook, in
+   git history) would be needed first.
+5. Open the cleanup PR — a separate PR, after step 3's verification, never
+   the cutover PR itself: add **`terraform/CUTOVER.md`** recording the
+   *Terraform → Plan and apply* run URL that added the route
+   (`https://github.com/sprue-works/polyglot-slides/actions/runs/<id>`), the
+   date, and the verification output from step 3; then delete `docs/CNAME`,
+   `docs/.nojekyll` and `docs/.assetsignore`. `check-listing.sh` refuses to
+   let the control files go unless `cutover` is `true` **and** that file
+   names an apply run, so the switch and the deletion cannot land in one
+   commit. Also delete the **`pages-dns`** and **`github-pages`**
+   environments in repo settings, and drop the "Until 1c has run" paragraph
+   above and this step.
+   Nothing in that PR touches a served byte, so the URLs stay as they are.
+   The CNAME's `content` (`sprue-works.github.io`) becomes meaningless once
+   the route is in front of it; leave it. Swapping the record for an
+   originless placeholder (`AAAA 100::`) would be a type change, i.e. a
+   replacement, which the record's `prevent_destroy` refuses by design — the
+   hostname must never be unresolvable — so that tidy-up is not worth its
+   own lifecycle exception.
 
 **Brand verification needs proof you own the homepage's domain.** Add
 `sprue.works` to Search Console and complete its DNS verification before the
@@ -297,7 +383,7 @@ Every claim on the page must be true to `src/Code.js` and `src/Sidebar.html`
 (no server, one user property, `LanguageApp` only, the open presentation
 only); do not pad it with retention periods or certifications that don't
 exist. Bump the effective date when the page changes. If a round rejects the
-policy, fix the page, confirm the Pages rebuild published it, resubmit in the
+policy, fix the page, confirm the Workers Builds deploy of `main` published it, resubmit in the
 Verification Center, **and reply to Google's email** — verification does not
 continue without the reply.
 
@@ -466,5 +552,5 @@ without copying anything. Re-run INSTALL.md's functional checklist from there.
 | Code in `src/` | push on merge; tag → new numbered version + a tracking issue for the bump | **bump *Slides add-on script version* in step 4 to the new number and close the tracking issue** — until then installed users keep the old version. No re-review for a version bump alone |
 | `oauthScopes` in `appsscript.json` | CI fails until `listing.json` matches | update consent screen + Marketplace SDK scopes; re-verification |
 | Name, icon, description | `check-listing.sh` validates the files | re-paste (steps 3–5); name/logo changes re-trigger brand verification |
-| `docs/privacy.html` wording (also `terms.html`) | Pages redeploys on merge; `check-listing.sh` checks the URL resolves to the file; `test-docs-theme.sh` fails until the text fixture is regenerated (`--update-fixtures`), so a wording change is always deliberate | walk the five-disclosure checklist (step 3); the URL is unchanged so nothing to re-paste, but a pending verification round needs a resubmit + email reply. Styling-only changes leave the text pinned and need nothing |
+| `docs/privacy.html` wording (also `terms.html`) | the PR gets a preview at `https://<branch-alias>-polyglot-slides.igneus-fdc.workers.dev/privacy.html` (Workers Builds comment); Workers Builds redeploys `main` on merge; `check-listing.sh` checks the URL resolves to the file; `test-docs-worker.sh` checks it is served 200 without a redirect; `test-docs-theme.sh` fails until the text fixture is regenerated (`--update-fixtures`), so a wording change is always deliberate | walk the five-disclosure checklist (step 3); the URL is unchanged so nothing to re-paste, but a pending verification round needs a resubmit + email reply. Styling-only changes leave the text pinned and need nothing |
 | `developerName`, `supportEmail`, `contactEmail` | `check-listing.sh` enforces `sprue.works` / an `@sprue.works` support address | re-paste (steps 3–5); a publisher-name or support-email change re-triggers brand verification |
