@@ -211,6 +211,21 @@ set_cutover true
 expect_pass "cutover flipped with Pages control files still present"
 
 fresh
+# Switch flipped but the route resource removed: a proxied hostname with no
+# Worker in front. The switch alone must not count as routing.
+set_cutover true
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/resource\s+"cloudflare_workers_route"[\s\S]*?\n\}\n/,""))')
+expect_fail "cutover without the Workers route resource" "must declare a cloudflare_workers_route"
+
+fresh
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/script\s*=\s*var\.worker_name/,"script  = \"some-other-worker\""))')
+expect_fail "route pointed at a different Worker" "script must be var.worker_name"
+
+fresh
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/default\s*=\s*"polyglot-slides"/,"default     = \"website\""))')
+expect_fail "worker_name default drifted from wrangler.jsonc" 'variable "worker_name" must default to'
+
+fresh
 # CNAME still present but no longer kept out of the Worker's assets.
 rm "$work/repo/docs/.assetsignore"
 expect_fail "Pages control file would be served by the Worker" "docs/.assetsignore must list CNAME"

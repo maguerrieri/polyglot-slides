@@ -120,9 +120,14 @@ Then the first apply, which must be a pure import:
 4. Merging the PR that adds `terraform/` runs *Terraform → Plan and apply* on
    `main`. Its plan must read **`1 to import, 0 to add, 0 to change, 0 to
    destroy`**: the existing CNAME is adopted, nothing else. An in-place change
-   there means the live record and the HCL have drifted — stop and reconcile
-   before anything else. From here the record is Terraform's; do not edit it
-   in the dashboard.
+   there means the live record and the HCL have drifted; the workflow's
+   guard step fails the run before applying in that case, so reconcile
+   (fix the HCL to match, or fix the record by hand and note why) and re-run
+   with `gh run rerun <run-id>`. The same re-run is how to retry once the
+   variables in step 1 exist; the apply path is push-to-`main` only, with no
+   manual dispatch, because the protected branch is its only authorization
+   boundary. From here the record is Terraform's; do not edit it in the
+   dashboard.
 
 Then the Worker, before touching the hostname:
 

@@ -5,11 +5,11 @@
 # TF_STATE_PREFIX, so the values live in one place (see
 # .github/workflows/terraform.yml and README.md "Terraform").
 #
-# Only the apply job of that workflow, running with this repository's
-# refs/heads/main ref (a push to main, or a manual dispatch on main), can
-# authenticate to the bucket: the foundation's workload identity provider
-# trusts exactly that OIDC subject. Pull requests and other branches are
-# rejected, so PR runs validate with -backend=false and never plan.
+# Only the apply job of that workflow, running on a push to this repository's
+# refs/heads/main ref, can authenticate to the bucket: the foundation's
+# workload identity provider trusts exactly that OIDC subject. Pull requests
+# and other branches are rejected, so PR runs validate with -backend=false
+# and never plan.
 terraform {
   backend "gcs" {}
 }

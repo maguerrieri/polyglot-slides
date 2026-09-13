@@ -13,8 +13,8 @@
 #
 # State lives in the GCS bucket that sprue-works/infrastructure provisions for
 # this repository (backend.tf). Pushes to main that touch terraform/ (or the
-# workflow), and manual dispatches on main, plan and apply through
-# .github/workflows/terraform.yml with CLOUDFLARE_API_TOKEN (Zone:Read,
+# workflow) plan and apply through .github/workflows/terraform.yml -- push
+# only, no manual dispatch -- with CLOUDFLARE_API_TOKEN (Zone:Read,
 # Zone:DNS:Edit, Zone:Workers Routes:Edit on sprue.works) from the repository
 # secret of that name. Nothing here is applied by hand.
 

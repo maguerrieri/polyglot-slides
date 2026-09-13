@@ -194,16 +194,21 @@ mirrors sprue-works/website's `terraform/`:
   through the workload identity provider named in the repository variable
   `GCP_WORKLOAD_IDENTITY_PROVIDER`. The provider trusts exactly this
   repository's `refs/heads/main` ref subject, so only the apply job on a push
-  to `main` (or a `workflow_dispatch` on `main`) can reach the bucket; the
-  job must not name a GitHub Environment, which would change the subject.
+  to `main` can reach the bucket; the job must not name a GitHub
+  Environment, which would change the subject. That is also why there is no
+  approval gate and no `workflow_dispatch`: the protected `main` branch is
+  the authorization boundary, and a failed apply is re-run with `gh run
+  rerun <id>`, which keeps the push event and ref.
   Dispatch `oidc-isolation-check.yml` from a non-`main` branch to confirm
   the rejection.
 - **Workflow.** `.github/workflows/terraform.yml` runs on changes under
   `terraform/`. Pull requests get `fmt -check`, `init -backend=false`, and
-  `validate` only; a push to `main` that touches those paths, or a manual
-  dispatch on `main`, additionally plans and applies. The apply job is the
-  only place the Cloudflare token appears; it needs `Zone:Read`,
-  `DNS:Edit`, and `Workers Routes:Edit` on the `sprue.works` zone.
+  `validate` only; a push to `main` that touches those paths additionally
+  plans and applies. Between plan and apply, a guard step fails the run if
+  any resource being imported would also be changed, so a drifted live
+  record is never "corrected" unattended. The apply job is the only place
+  the Cloudflare token appears; it needs `Zone:Read`, `DNS:Edit`, and
+  `Workers Routes:Edit` on the `sprue.works` zone.
 - **Import.** The CNAME was created through the Cloudflare API before this
   Terraform existed. An `import` block adopts it on the first apply from
   `main`; that plan must read `1 to import, 0 to add, 0 to change, 0 to

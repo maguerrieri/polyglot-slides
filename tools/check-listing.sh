@@ -216,6 +216,26 @@ if (wrangler) {
   if (!cutoverDefault) fail('terraform/main.tf must declare variable "cutover" with a boolean default (the route-based cutover switch, RUNBOOK 1c)');
   const cutOver = cutoverDefault && cutoverDefault[1] === 'true';
   if (!cutOver && pagesFiles.length < 2) fail('docs/CNAME and docs/.nojekyll must stay until terraform/main.tf sets cutover = true (RUNBOOK 1c); GitHub Pages is still the live site');
+  // The switch is only proof of routing if the stack still routes this
+  // hostname to this Worker: the route resource keyed on `cutover`, the
+  // hostname default equal to the listing's, and the Worker name equal to
+  // wrangler.jsonc's. Otherwise a proxied hostname would serve GitHub Pages
+  // through Cloudflare with no Worker in front -- or nothing at all once the
+  // control files are gone.
+  if (tfMain) {
+    const tfDefault = (name) => (tfMain.match(new RegExp(`variable\\s+"${name}"[\\s\\S]*?default\\s*=\\s*"([^"]*)"`)) || [])[1];
+    if (tfDefault('hostname') !== publicHost) fail(`terraform/main.tf variable "hostname" must default to ${publicHost} (got ${tfDefault('hostname')})`);
+    if (tfDefault('worker_name') !== wrangler.name) fail(`terraform/main.tf variable "worker_name" must default to wrangler.jsonc's name ${wrangler.name} (got ${tfDefault('worker_name')})`);
+    const route = tfMain.match(/resource\s+"cloudflare_workers_route"\s+"[^"]+"\s*\{([\s\S]*?)\n\}/);
+    if (!route) fail('terraform/main.tf must declare a cloudflare_workers_route for the hostname (the cutover has nothing to route to otherwise)');
+    else {
+      const body = route[1];
+      if (!/count\s*=\s*var\.cutover\s*\?\s*1\s*:\s*0/.test(body)) fail('the cloudflare_workers_route must be keyed on var.cutover (count = var.cutover ? 1 : 0)');
+      if (!/pattern\s*=\s*"\$\{var\.hostname\}\/\*"/.test(body)) fail('the cloudflare_workers_route pattern must be "${var.hostname}/*"');
+      if (!/script\s*=\s*var\.worker_name\b/.test(body)) fail('the cloudflare_workers_route script must be var.worker_name');
+    }
+    if (!/resource\s+"cloudflare_dns_record"[\s\S]*?proxied\s*=\s*var\.cutover/.test(tfMain)) fail('the cloudflare_dns_record must set proxied = var.cutover (a route only receives traffic over a proxied record)');
+  }
   if (pagesFiles.length) {
     const ignored = fs.existsSync('docs/.assetsignore') ? fs.readFileSync('docs/.assetsignore', 'utf8').split(/\r?\n/) : [];
     for (const f of pagesFiles) if (!ignored.includes(f)) fail(`docs/.assetsignore must list ${f} while docs/${f} exists (GitHub Pages control file, not a page)`);
