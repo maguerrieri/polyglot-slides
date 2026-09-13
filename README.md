@@ -150,9 +150,11 @@ in `wrangler.jsonc` and deployed by **Workers Builds** from this repo, the
 same setup as sprue-works/website. There is no build step; the committed
 files are what is served.
 
-- **Production:** every push to `main` runs `npx wrangler deploy` and serves
-  https://polyglot.sprue.works (also reachable at
-  `https://polyglot-slides.igneus-fdc.workers.dev`).
+- **Production:** every push to `main` runs `npx wrangler deploy`, which
+  publishes `https://polyglot-slides.igneus-fdc.workers.dev`. That is also
+  what https://polyglot.sprue.works serves **once the Terraform cutover has
+  run** (`marketplace/RUNBOOK.md` §1c); before it, the hostname still points
+  at GitHub Pages.
 - **Previews:** every other branch runs `npx wrangler versions upload`, which
   publishes a preview aliased by branch name at
   `https://<alias>-polyglot-slides.igneus-fdc.workers.dev`, where `<alias>` is

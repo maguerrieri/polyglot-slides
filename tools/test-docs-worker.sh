@@ -38,8 +38,14 @@ if curl -s -o /dev/null "http://127.0.0.1:$port/" 2>/dev/null; then
   exit 1
 fi
 
-# Pin the wrangler major: html_handling semantics are what this test guards.
-npx --yes wrangler@4 dev --local --port "$port" --ip 127.0.0.1 >"$work/wrangler.log" 2>&1 &
+# Pin the exact wrangler version the html_handling behaviour was verified
+# against (CLAUDE.md "The docs site is a Worker"). Bump it deliberately and
+# re-read the results; a floating major could change what `wrangler dev`
+# emulates without anyone noticing. Workers Builds' deploy command resolves
+# wrangler on its own -- html_handling is enforced by the platform there,
+# not by wrangler -- so the two need not match.
+WRANGLER_VERSION="${WRANGLER_VERSION:-4.131.1}"
+npx --yes "wrangler@$WRANGLER_VERSION" dev --local --port "$port" --ip 127.0.0.1 >"$work/wrangler.log" 2>&1 &
 pid=$!
 for _ in $(seq 1 90); do
   curl -sf -o /dev/null "http://127.0.0.1:$port/privacy.html" 2>/dev/null && break
