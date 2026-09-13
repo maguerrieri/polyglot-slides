@@ -246,7 +246,19 @@ if (wrangler) {
       if (!/pattern\s*=\s*"\$\{var\.hostname\}\/\*"/.test(body)) fail('the cloudflare_workers_route pattern must be "${var.hostname}/*"');
       if (!/script\s*=\s*var\.worker_name\b/.test(body)) fail('the cloudflare_workers_route script must be var.worker_name');
     }
-    if (!/resource\s+"cloudflare_dns_record"[\s\S]*?proxied\s*=\s*var\.cutover/.test(tfMain)) fail('the cloudflare_dns_record must set proxied = var.cutover (a route only receives traffic over a proxied record)');
+    // The record the route rides on must be this hostname's CNAME to GitHub
+    // Pages, proxied by the same switch -- not some other record that
+    // happens to reference var.cutover.
+    const record = tfMain.match(/resource\s+"cloudflare_dns_record"\s+"[^"]+"\s*\{([\s\S]*?)\n\}/);
+    if (!record) fail('terraform/main.tf must declare the cloudflare_dns_record for the hostname');
+    else {
+      const body = record[1];
+      if (!/\bname\s*=\s*var\.hostname\b/.test(body)) fail('the cloudflare_dns_record name must be var.hostname');
+      if (!/\btype\s*=\s*"CNAME"/.test(body)) fail('the cloudflare_dns_record must stay a CNAME (a type change is a replacement the hostname cannot afford)');
+      if (!/\bcontent\s*=\s*"sprue-works\.github\.io"/.test(body)) fail('the cloudflare_dns_record must keep pointing at sprue-works.github.io (GitHub Pages is the origin until the route is in front)');
+      if (!/\bproxied\s*=\s*var\.cutover\b/.test(body)) fail('the cloudflare_dns_record must set proxied = var.cutover (a route only receives traffic over a proxied record)');
+      if (!/prevent_destroy\s*=\s*true/.test(body)) fail('the cloudflare_dns_record must keep prevent_destroy = true');
+    }
   }
   if (pagesFiles.length) {
     const ignored = fs.existsSync('docs/.assetsignore') ? fs.readFileSync('docs/.assetsignore', 'utf8').split(/\r?\n/) : [];

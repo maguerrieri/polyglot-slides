@@ -241,6 +241,16 @@ fresh_pre
 expect_fail "worker_name default drifted from wrangler.jsonc" 'variable "worker_name" must default to'
 
 fresh_pre
+# The record repointed at another host: the route would ride a record that
+# no longer belongs to this hostname's GitHub Pages origin.
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/name\s*=\s*var\.hostname/,"name    = \"other.sprue.works\""))')
+expect_fail "DNS record renamed away from the hostname" "record name must be var.hostname"
+
+fresh_pre
+(cd "$work/repo" && node -e 'const fs=require("fs"),f="terraform/main.tf";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/content\s*=\s*"sprue-works\.github\.io"/,"content = \"example.com\""))')
+expect_fail "DNS record retargeted" "must keep pointing at sprue-works.github.io"
+
+fresh_pre
 # CNAME still present but no longer kept out of the Worker's assets.
 rm "$work/repo/docs/.assetsignore"
 expect_fail "Pages control file would be served by the Worker" "docs/.assetsignore must list CNAME"
