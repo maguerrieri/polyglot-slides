@@ -206,8 +206,11 @@ is two in-place changes Terraform makes in order, both reversible:
    above and this step.
    Nothing in that PR touches a served byte, so the URLs stay as they are.
    The CNAME's `content` (`sprue-works.github.io`) becomes meaningless once
-   proxied and can later be pointed at an originless placeholder
-   (`AAAA 100::`) in its own reviewed PR; leaving it is harmless.
+   the route is in front of it; leave it. Swapping the record for an
+   originless placeholder (`AAAA 100::`) would be a type change, i.e. a
+   replacement, which the record's `prevent_destroy` refuses by design — the
+   hostname must never be unresolvable — so that tidy-up is not worth its
+   own lifecycle exception.
 
 **Brand verification needs proof you own the homepage's domain.** Add
 `sprue.works` to Search Console and complete its DNS verification before the
