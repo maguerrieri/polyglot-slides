@@ -283,7 +283,11 @@ Until the cutover, `docs/CNAME` and `docs/.nojekyll` stay in the repo:
 GitHub Pages still serves the live hostname from `main:/docs`, and removing
 `CNAME` from the published branch drops its custom domain immediately.
 `docs/.assetsignore` keeps them out of the Worker. Removing all three is the
-last step of RUNBOOK §1c. The old Pages DNS tooling
+last step of RUNBOOK §1c, and `check-listing.sh` allows it only when
+`cutover` is `true` *and* `terraform/CUTOVER.md` names the apply run that
+added the route — an explicit attestation, so the switch and the deletion
+cannot ride one commit (the apply and the Pages build are separate
+operations, and the route must be verified live in between). The old Pages DNS tooling
 (`tools/reconcile-pages-dns.sh`, `pages-dns.yml`, the DNS-only CNAME rule)
 was retired in #47 — Terraform owns the record now, so don't recreate it and
 don't edit the record in the dashboard.

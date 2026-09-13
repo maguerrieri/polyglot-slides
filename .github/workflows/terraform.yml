@@ -111,11 +111,15 @@ jobs:
       # also be changed in the same plan. If the live CNAME has drifted from
       # the HCL, this stops the run before anything is applied (RUNBOOK 1b)
       # rather than silently "correcting" the record Google resolves.
+      # Terraform's plan JSON reports a pure import as actions ["no-op"] with
+      # `importing` set; ["create"] is tolerated as well because a change that
+      # is importing cannot be a real create. Anything involving update,
+      # delete or replace is drift.
       - name: Refuse to apply an import that also changes the resource
         run: |
           set -eu
           terraform -chdir=terraform show -json apply.tfplan > plan.json
-          drifted="$(jq -r '[.resource_changes[]? | select(.change.importing != null) | select(.change.actions != ["no-op"]) | .address] | .[]' plan.json)"
+          drifted="$(jq -r '[.resource_changes[]? | select(.change.importing != null) | select(.change.actions != ["no-op"] and .change.actions != ["create"]) | .address] | .[]' plan.json)"
           if [ -n "$drifted" ]; then
             echo "::error::Import is not a no-op for: $drifted. The live resource differs from terraform/main.tf; reconcile before applying (marketplace/RUNBOOK.md 1b)."
             exit 1

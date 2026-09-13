@@ -193,10 +193,17 @@ is two in-place changes Terraform makes in order, both reversible:
    GitHub's side. After this step the rollback above no longer has a
    Pages site to fall back to; re-enabling Pages (1a of the old runbook, in
    git history) would be needed first.
-5. Open the cleanup PR: delete `docs/CNAME`, `docs/.nojekyll` and
-   `docs/.assetsignore` (the `check-listing.sh` self-test already covers that
-   shape); delete the **`pages-dns`** and **`github-pages`** environments in
-   repo settings; drop the "Until 1c has run" paragraph above and this step.
+5. Open the cleanup PR — a separate PR, after step 3's verification, never
+   the cutover PR itself: add **`terraform/CUTOVER.md`** recording the
+   *Terraform → Plan and apply* run URL that added the route
+   (`https://github.com/sprue-works/polyglot-slides/actions/runs/<id>`), the
+   date, and the verification output from step 3; then delete `docs/CNAME`,
+   `docs/.nojekyll` and `docs/.assetsignore`. `check-listing.sh` refuses to
+   let the control files go unless `cutover` is `true` **and** that file
+   names an apply run, so the switch and the deletion cannot land in one
+   commit. Also delete the **`pages-dns`** and **`github-pages`**
+   environments in repo settings, and drop the "Until 1c has run" paragraph
+   above and this step.
    Nothing in that PR touches a served byte, so the URLs stay as they are.
    The CNAME's `content` (`sprue-works.github.io`) becomes meaningless once
    proxied and can later be pointed at an originless placeholder

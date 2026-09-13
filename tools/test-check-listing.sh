@@ -248,9 +248,23 @@ rm "$work/repo/docs/CNAME"
 expect_fail "Pages CNAME removed before the Terraform cutover" "must stay until terraform/main.tf sets cutover = true"
 
 fresh
-# Post-cutover cleanup shape: the switch is true and the Pages control
-# files and their ignore file are all gone (RUNBOOK section 1c, last step).
+# Switch flipped and control files deleted in the same commit, with no
+# attestation that the route was applied and verified: refused.
 set_cutover true
+rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll" "$work/repo/docs/.assetsignore"
+expect_fail "control files removed in the cutover commit itself" "may only go once terraform/CUTOVER.md attests"
+
+fresh
+set_cutover true
+printf 'Cut over on 2026-09-20.\n' >"$work/repo/terraform/CUTOVER.md"
+expect_fail "attestation without the apply run URL" "must name the Terraform apply run"
+
+fresh
+# Post-cutover cleanup shape: the switch is true, terraform/CUTOVER.md names
+# the apply run, and the Pages control files and their ignore file are gone
+# (RUNBOOK section 1c, last step).
+set_cutover true
+printf 'Route applied by https://github.com/sprue-works/polyglot-slides/actions/runs/1234567890 and verified live.\n' >"$work/repo/terraform/CUTOVER.md"
 rm "$work/repo/docs/CNAME" "$work/repo/docs/.nojekyll" "$work/repo/docs/.assetsignore"
 expect_pass "Pages control files and .assetsignore removed after cutover"
 

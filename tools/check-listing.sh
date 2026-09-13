@@ -215,7 +215,19 @@ if (wrangler) {
   const cutoverDefault = tfMain.match(/variable\s+"cutover"[\s\S]*?default\s*=\s*(true|false)/);
   if (!cutoverDefault) fail('terraform/main.tf must declare variable "cutover" with a boolean default (the route-based cutover switch, RUNBOOK 1c)');
   const cutOver = cutoverDefault && cutoverDefault[1] === 'true';
-  if (!cutOver && pagesFiles.length < 2) fail('docs/CNAME and docs/.nojekyll must stay until terraform/main.tf sets cutover = true (RUNBOOK 1c); GitHub Pages is still the live site');
+  // Flipping the switch and deleting the control files must not happen in
+  // one commit: the Terraform apply is a separate operation from the Pages
+  // build that would drop the live domain, and the route has to be verified
+  // live first. The cleanup PR therefore also adds terraform/CUTOVER.md, an
+  // explicit attestation naming the apply run that added the route (RUNBOOK
+  // 1c); only with both in place may the control files go.
+  const attestation = fs.existsSync('terraform/CUTOVER.md') ? fs.readFileSync('terraform/CUTOVER.md', 'utf8') : '';
+  const attested = /https:\/\/github\.com\/sprue-works\/polyglot-slides\/actions\/runs\/\d+/.test(attestation);
+  if (attestation && !attested) fail('terraform/CUTOVER.md must name the Terraform apply run (a https://github.com/sprue-works/polyglot-slides/actions/runs/<id> URL) that added the route');
+  if (pagesFiles.length < 2) {
+    if (!cutOver) fail('docs/CNAME and docs/.nojekyll must stay until terraform/main.tf sets cutover = true (RUNBOOK 1c); GitHub Pages is still the live site');
+    else if (!attested) fail('docs/CNAME and docs/.nojekyll may only go once terraform/CUTOVER.md attests the applied, verified cutover (RUNBOOK 1c); flipping the switch and deleting them in one commit is not allowed');
+  }
   // The switch is only proof of routing if the stack still routes this
   // hostname to this Worker: the route resource keyed on `cutover`, the
   // hostname default equal to the listing's, and the Worker name equal to
