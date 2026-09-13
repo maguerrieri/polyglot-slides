@@ -71,6 +71,17 @@ import {
   id = "0a2832ed293070b06bd75cb7fc8db4d7/828fa1c4c5c6e6afef6cab8eaf099f6e"
 }
 
+# Every record on the hostname, read fresh at each plan. The retired shell
+# reconciler refused to act when an A/AAAA or a second CNAME sat next to the
+# record; the precondition below keeps that guarantee, since an import
+# adopts one record ID and would not notice siblings on its own.
+data "cloudflare_dns_records" "docs_site" {
+  zone_id = var.zone_id
+  name = {
+    exact = var.hostname
+  }
+}
+
 resource "cloudflare_dns_record" "docs_site" {
   zone_id = var.zone_id
   name    = var.hostname
@@ -85,6 +96,14 @@ resource "cloudflare_dns_record" "docs_site" {
     # The hostname is what Google holds; a replacement would leave it
     # unresolvable for the gap. Every change here must be in place.
     prevent_destroy = true
+
+    precondition {
+      condition = (
+        length(data.cloudflare_dns_records.docs_site.result) == 1 &&
+        data.cloudflare_dns_records.docs_site.result[0].type == "CNAME"
+      )
+      error_message = "${var.hostname} must carry exactly one record, a CNAME, before Terraform manages or proxies it; found ${length(data.cloudflare_dns_records.docs_site.result)} record(s). Resolve the extra records by hand after identifying their owner (they were never this stack's)."
+    }
   }
 }
 
